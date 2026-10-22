@@ -726,6 +726,7 @@ require 'templates/header.php';
             <div class="card shadow-sm border-0">
                 <div class="card-body p-4">
                     <form method="POST" enctype="multipart/form-data" class="row g-3 align-items-end">
+                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
                         <div class="col-md-8">
                             <label class="form-label fw-semibold">📁 Файл для импорта</label>
                             <input type="file" name="import_file" class="form-control" accept=".csv,.zip" required>

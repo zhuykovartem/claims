@@ -4,7 +4,7 @@ requireAuth();
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requireCsrfToken();
 }
- $csrfToken = getCsrfToken();
+$csrfToken = getCsrfToken();
 $user = currentUser();
 $isAdmin = ($_SESSION['role'] === 'admin' || $_SESSION['user_id'] === 1);
 
@@ -160,6 +160,7 @@ require 'templates/header.php';
                         <div class="card-body p-4">
                             <h5 class="fw-bold mb-3"><i class="bi bi-person-plus text-success"></i> Создать пользователя</h5>
                             <form method="POST">
+                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
                                 <div class="mb-3">
                                     <label class="form-label fw-semibold">Логин <span class="text-danger">*</span></label>
                                     <input type="text" name="username" class="form-control" placeholder="ivanov" required minlength="3">
@@ -200,6 +201,7 @@ require 'templates/header.php';
                         <div class="card-body p-4">
                             <h5 class="fw-bold mb-3"><i class="bi bi-key text-warning"></i> Сменить пароль</h5>
                             <form method="POST">
+                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
                                 <div class="mb-3">
                                     <label class="form-label fw-semibold">Пользователь</label>
                                     <select name="user_id" class="form-select">
@@ -302,7 +304,7 @@ require 'templates/header.php';
                                                                 <i class="bi bi-<?= $u['is_active'] ? 'pause-circle' : 'play-circle' ?>"></i>
                                                             </button>
                                                         </form>
-                                                                                        <form method="POST" class="d-inline" onsubmit="return confirm('Удалить пользователя «<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>»?')">
+                                                        <form method="POST" class="d-inline" onsubmit="return confirm('Удалить пользователя «<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>»?')">
                                                             <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
                                                             <input type="hidden" name="delete_user" value="<?= $u['id'] ?>">
                                                             <button type="submit" class="btn btn-outline-danger" title="Удалить">

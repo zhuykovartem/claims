@@ -12,7 +12,7 @@ $redirect = 'index.php';
 if (!empty($_GET['redirect']) && is_string($_GET['redirect'])
     && preg_match('#^/?[A-Za-z0-9_\-]+\.php(\?[A-Za-z0-9_=&%\.\-]*)?$#', $_GET['redirect'])) {
     $redirect = $_GET['redirect'];
-
+    }
 // ===== Сообщение об истечении сессии =====
 if (isset($_GET['expired'])) {
     $error = '⏰ Сессия истекла. Пожалуйста, войдите снова.';
@@ -72,9 +72,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$blocked) {
 
                 // Пересчитываем попытки после записи
                 try {
-                    $stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM logs
-                        WHERE action = 'login_failed' AND ip_address = ?
-                        AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)");
+                    $stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM login_attempts
+                        WHERE ip_address = ?
+                        AND attempted_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)");
                     $stmt->execute([$ip]);
                     $failedCount = (int)($stmt->fetch()['cnt'] ?? 0);
                     $blocked = ($failedCount >= 5);

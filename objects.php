@@ -5,7 +5,7 @@ requireRole('admin', 'manager');
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requireCsrfToken();
 }
- $csrfToken = getCsrfToken();
+$csrfToken = getCsrfToken();
 $user = currentUser();
 $message = '';
 $error = '';
@@ -148,6 +148,7 @@ require 'templates/header.php';
                 <div class="collapse" id="addCompanyForm">
                     <div class="card-body border-bottom bg-light">
                         <form method="POST" class="row g-2 align-items-end">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
                             <div class="col-md-6">
                                 <label class="form-label fw-semibold">Название компании</label>
                                 <input type="text" name="company_name" class="form-control" placeholder="ООО «СтройГарант»" required>
@@ -200,11 +201,15 @@ require 'templates/header.php';
                                                                 <td><?= htmlspecialchars($ol['name']) ?></td>
                                                                 <td><?= $roleLabels[$ol['role']] ?? $ol['role'] ?></td>
                                                                 <td>
-                                                                    <a href="?unlink_obj=<?= $ol['id'] ?>&unlink_comp=<?= $c['id'] ?>&unlink_role=<?= rawurlencode($ol['role']) ?>"
-                                                                       class="btn btn-sm btn-outline-danger"
-                                                                       onclick="return confirm('Отвязать компанию от объекта?')">
-                                                                        <i class="bi bi-x-lg"></i>
-                                                                    </a>
+                                                                    <form method="POST" class="d-inline" onsubmit="return confirm('Отвязать компанию «<?= htmlspecialchars($c['name'], ENT_QUOTES) ?>» от объекта «<?= htmlspecialchars($ol['name'], ENT_QUOTES) ?>»?')">
+                                                                        <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                                                        <input type="hidden" name="unlink_obj" value="<?= $ol['id'] ?>">
+                                                                        <input type="hidden" name="unlink_comp" value="<?= $c['id'] ?>">
+                                                                        <input type="hidden" name="unlink_role" value="<?= htmlspecialchars($ol['role'], ENT_QUOTES) ?>">
+                                                                        <button type="submit" class="btn btn-sm btn-outline-danger" title="Отвязать">
+                                                                            <i class="bi bi-x-lg"></i>
+                                                                        </button>
+                                                                    </form>
                                                                 </td>
                                                             </tr>
                                                         <?php endforeach; ?>
@@ -215,6 +220,7 @@ require 'templates/header.php';
                                             <?php endif; ?>
 
                                             <form method="POST" class="row g-2 align-items-end border-top pt-3">
+                                                <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
                                                 <input type="hidden" name="link_company_id" value="<?= $c['id'] ?>">
                                                 <div class="col-md-5">
                                                     <label class="form-label small fw-semibold">Привязать к объекту</label>
@@ -239,20 +245,21 @@ require 'templates/header.php';
                                                         <option value="other">📋 Другое</option>
                                                     </select>
                                                 </div>
-                                                <div class="col-md-2">
+                                                <div class="col-md-4">
                                                     <button type="submit" name="link_company" class="btn btn-sm btn-success w-100">
                                                         <i class="bi bi-link"></i> Привязать
                                                     </button>
                                                 </div>
-                                                <?php if ($c['claims_count'] == 0): ?>
-                                                    <div class="col-md-2">
-                                                        <a href="?delete_company=<?= $c['id'] ?>" class="btn btn-sm btn-outline-danger w-100"
-                                                           onclick="return confirm('Удалить компанию «<?= htmlspecialchars($c['name'], ENT_QUOTES) ?>»?')">
-                                                            <i class="bi bi-trash"></i>
-                                                        </a>
-                                                    </div>
-                                                <?php endif; ?>
                                             </form>
+                                            <?php if ($c['claims_count'] == 0): ?>
+                                                <form method="POST" class="mt-2" onsubmit="return confirm('Удалить компанию «<?= htmlspecialchars($c['name'], ENT_QUOTES) ?>»? Это также уберёт все её привязки к объектам.')">
+                                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                                    <input type="hidden" name="delete_company" value="<?= $c['id'] ?>">
+                                                    <button type="submit" class="btn btn-sm btn-outline-danger" title="Удалить компанию">
+                                                        <i class="bi bi-trash"></i> Удалить компанию
+                                                    </button>
+                                                </form>
+                                            <?php endif; ?>
                                         </div>
                                     </div>
                                 </div>
@@ -276,6 +283,7 @@ require 'templates/header.php';
                 <div class="collapse" id="addObjectForm">
                     <div class="card-body border-bottom bg-light">
                         <form method="POST" class="row g-2 align-items-end">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
                             <div class="col-md-5">
                                 <label class="form-label fw-semibold">Название объекта</label>
                                 <input type="text" name="object_name" class="form-control" placeholder="ЖК «Солнечный»" required>
