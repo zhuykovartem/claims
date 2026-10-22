@@ -1,7 +1,10 @@
 <?php
 require 'config.php';
 require_once 'helpers.php';   // resolveObject(), normalizeDate(), splitAdditionalFiles()
-
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requireCsrfToken();
+}
+ $csrfToken = getCsrfToken();
 requireAuth();
 requireRole('admin', 'manager');
 

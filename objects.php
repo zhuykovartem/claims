@@ -2,7 +2,10 @@
 require 'config.php';
 requireAuth();
 requireRole('admin', 'manager');
-
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requireCsrfToken();
+}
+ $csrfToken = getCsrfToken();
 $user = currentUser();
 $message = '';
 $error = '';
@@ -28,8 +31,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_company'])) {
 }
 
 // ===== Удаление компании =====
-if (isset($_GET['delete_company'])) {
-    $id = (int)$_GET['delete_company'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_company'])) {
+    $id = (int)$_POST['delete_company'];
     $stmt = $pdo->prepare("SELECT name FROM companies WHERE id=?");
     $stmt->execute([$id]);
     $name = $stmt->fetchColumn() ?: 'ID=' . $id;
@@ -90,10 +93,10 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['link_company'])) {
 }
 
 // ===== Удаление привязки =====
-if (isset($_GET["unlink_obj"], $_GET["unlink_comp"], $_GET["unlink_role"])) {
-    $object_id  = (int)$_GET["unlink_obj"];
-    $company_id = (int)$_GET["unlink_comp"];
-    $role       = $_GET["unlink_role"];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["unlink_obj"], $_POST["unlink_comp"], $_POST["unlink_role"])) {
+    $object_id  = (int)$_POST["unlink_obj"];
+    $company_id = (int)$_POST["unlink_comp"];
+    $role       = $_POST["unlink_role"];
     $stmt = $pdo->prepare("DELETE FROM object_companies WHERE object_id=? AND company_id=? AND role=?");
     $stmt->execute([$object_id, $company_id, $role]);
     logAction("unlink", "object_company", 0, "Отвязана компания ID=$company_id от объекта ID=$object_id");

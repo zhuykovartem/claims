@@ -2,11 +2,12 @@
 require 'config.php';
 requireAuth();
 
-$objectFilter    = $_GET['object_id'] ?? '';
-$searchQuery     = $_GET['search'] ?? '';
-$directionFilter = $_GET['direction'] ?? '';
-$statusFilter    = $_GET['status'] ?? '';
-$colorFilter     = $_GET['color'] ?? '';
+$g = fn(string $key): string => isset($_GET[$key]) && is_string($_GET[$key]) ? $_GET[$key] : '';
+ $objectFilter    = $g('object_id');
+ $searchQuery     = $g('search');
+ $directionFilter = $g('direction');
+ $statusFilter    = $g('status');
+ $colorFilter     = $g('color');
 
 $where = [];
 $params = [];
@@ -256,8 +257,8 @@ require 'templates/header.php';
                                         </td>
                                         <td><?= htmlspecialchars($c['recipient_name'] ?? '—') ?></td>
                                         <td class="text-truncate" style="max-width:200px;" title="<?= htmlspecialchars($c['subject']) ?>">
-                                            <?= htmlspecialchars(substr($c['subject'], 0, 60)) ?>
-                                            <?= strlen($c['subject']) > 60 ? '...' : '' ?>
+                                            <?= htmlspecialchars(mb_substr($c['subject'], 0, 60)) ?>
+                                            <?= mb_strlen($c['subject']) > 60 ? '...' : '' ?>
                                         </td>
                                         <td><?= $c['received_date'] ? date('d.m.Y', strtotime($c['received_date'])) : '—' ?></td>
                                         <td><?= $c['response_date'] ? date('d.m.Y', strtotime($c['response_date'])) : '—' ?></td>
@@ -305,11 +306,10 @@ require 'templates/header.php';
                             (всего: <?= $total ?>)
                         </small>
                         <form method="GET" class="d-inline-block">
-                            <?php foreach ($_GET as $k => $v): ?>
-                                <?php if ($k !== 'per_page' && $k !== 'page'): ?>
+                                <?php foreach ($_GET as $k => $v): ?>
+                                    <?php if (!is_string($v) || $k === 'per_page' || $k === 'page') continue; ?>
                                     <input type="hidden" name="<?= htmlspecialchars($k) ?>" value="<?= htmlspecialchars($v) ?>">
-                                <?php endif; ?>
-                            <?php endforeach; ?>
+                                <?php endforeach; ?>
                             <div class="input-group input-group-sm">
                                 <span class="input-group-text">Показывать</span>
                                 <select name="per_page" class="form-select" onchange="this.form.submit()" style="width:auto; min-width:70px;">

@@ -1,7 +1,10 @@
 <?php
 require 'config.php';
 requireAuth();
-
+if ($_SERVER['REQUEST_METHOD'] === 'POST') {
+    requireCsrfToken();
+}
+ $csrfToken = getCsrfToken();
 $user = currentUser();
 $isAdmin = ($_SESSION['role'] === 'admin' || $_SESSION['user_id'] === 1);
 
@@ -64,8 +67,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
 }
 
 // 3. Деактивация / активация пользователя (только админ)
-if (isset($_GET['toggle_active']) && $isAdmin) {
-    $targetId = (int)$_GET['toggle_active'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['toggle_active']) && $isAdmin) {
+    $targetId = (int)$_POST['toggle_active'];
     if ($targetId === 1) {
         $error = '❌ Нельзя деактивировать главного администратора';
     } elseif ($targetId === $_SESSION['user_id']) {
@@ -79,8 +82,8 @@ if (isset($_GET['toggle_active']) && $isAdmin) {
 }
 
 // 4. Удаление пользователя (только админ)
-if (isset($_GET['delete_user']) && $isAdmin) {
-    $targetId = (int)$_GET['delete_user'];
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user']) && $isAdmin) {
+    $targetId = (int)$_POST['delete_user'];
     if ($targetId === 1) {
         $error = '❌ Нельзя удалить главного администратора';
     } elseif ($targetId === $_SESSION['user_id']) {
@@ -292,16 +295,20 @@ require 'templates/header.php';
                                                         <i class="bi bi-key"></i>
                                                     </a>
                                                     <?php if ($u['id'] !== 1 && $u['id'] !== $_SESSION['user_id']): ?>
-                                                        <a href="?toggle_active=<?= $u['id'] ?>" class="btn btn-outline-<?= $u['is_active'] ? 'secondary' : 'success' ?>"
-                                                           title="<?= $u['is_active'] ? 'Деактивировать' : 'Активировать' ?>"
-                                                           onclick="return confirm('<?= $u['is_active'] ? 'Деактивировать' : 'Активировать' ?> пользователя «<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>»?')">
-                                                            <i class="bi bi-<?= $u['is_active'] ? 'pause-circle' : 'play-circle' ?>"></i>
-                                                        </a>
-                                                        <a href="?delete_user=<?= $u['id'] ?>" class="btn btn-outline-danger"
-                                                           onclick="return confirm('Удалить пользователя «<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>»?')"
-                                                           title="Удалить">
-                                                            <i class="bi bi-trash"></i>
-                                                        </a>
+                                                        <form method="POST" class="d-inline" onsubmit="return confirm('<?= $u['is_active'] ? 'Деактивировать' : 'Активировать' ?> пользователя «<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>»?')">
+                                                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                                            <input type="hidden" name="toggle_active" value="<?= $u['id'] ?>">
+                                                            <button type="submit" class="btn btn-outline-<?= $u['is_active'] ? 'secondary' : 'success' ?>" title="<?= $u['is_active'] ? 'Деактивировать' : 'Активировать' ?>">
+                                                                <i class="bi bi-<?= $u['is_active'] ? 'pause-circle' : 'play-circle' ?>"></i>
+                                                            </button>
+                                                        </form>
+                                                                                        <form method="POST" class="d-inline" onsubmit="return confirm('Удалить пользователя «<?= htmlspecialchars($u['username'], ENT_QUOTES) ?>»?')">
+                                                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                                            <input type="hidden" name="delete_user" value="<?= $u['id'] ?>">
+                                                            <button type="submit" class="btn btn-outline-danger" title="Удалить">
+                                                                <i class="bi bi-trash"></i>
+                                                            </button>
+                                                        </form>
                                                     <?php else: ?>
                                                         <span class="text-muted" title="Недоступно"><i class="bi bi-lock"></i></span>
                                                     <?php endif; ?>

@@ -200,24 +200,23 @@ function logAction($action, $entity_type = null, $entity_id = null, $details = n
             $entity_id,
             $details ? mb_substr($details, 0, 1000) : null,
             $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0',
-            $_SERVER['HTTP_USER_AGENT'] ?? ''
+            mb_substr($_SERVER['HTTP_USER_AGENT'] ?? '', 0, 500)
         ]);
     } catch (PDOException $e) {}
 }
 
 function logFailedLogin($username) {
     global $pdo;
+    // 1) счётчик для антибрутфорса — отдельная таблица
     try {
-        $stmt = $pdo->prepare("INSERT INTO logs
-            (user_id, username, action, entity_type, details, ip_address, user_agent)
-            VALUES (0, ?, 'login_failed', 'user', ?, ?, ?)");
+        $stmt = $pdo->prepare("INSERT INTO login_attempts (ip_address, username) VALUES (?, ?)");
         $stmt->execute([
-            mb_substr($username, 0, 100),
-            'Неудачная попытка входа: ' . mb_substr($username, 0, 50),
             $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0',
-            $_SERVER['HTTP_USER_AGENT'] ?? ''
+            mb_substr($username, 0, 50),
         ]);
     } catch (PDOException $e) {}
+    // 2) аудит — навсегда остаётся в журнале
+    logAction('login_failed', 'user', null, 'Неудачная попытка входа: ' . mb_substr($username, 0, 50));
 }
 
 // ===== Валидация файлов =====

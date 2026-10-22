@@ -8,7 +8,10 @@ if (isset($_SESSION['user_id'])) {
 }
 
 $error = '';
-$redirect = $_GET['redirect'] ?? 'index.php';
+$redirect = 'index.php';
+if (!empty($_GET['redirect']) && is_string($_GET['redirect'])
+    && preg_match('#^/?[A-Za-z0-9_\-]+\.php(\?[A-Za-z0-9_=&%\.\-]*)?$#', $_GET['redirect'])) {
+    $redirect = $_GET['redirect'];
 
 // ===== Сообщение об истечении сессии =====
 if (isset($_GET['expired'])) {
@@ -18,9 +21,9 @@ if (isset($_GET['expired'])) {
 // ===== Проверка брутфорса: 5 неудачных попыток за 15 минут =====
 $ip = $_SERVER['REMOTE_ADDR'] ?? '';
 try {
-    $stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM logs
-        WHERE action = 'login_failed' AND ip_address = ?
-        AND created_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)");
+    $stmt = $pdo->prepare("SELECT COUNT(*) as cnt FROM login_attempts
+        WHERE ip_address = ?
+        AND attempted_at > DATE_SUB(NOW(), INTERVAL 15 MINUTE)");
     $stmt->execute([$ip]);
     $failedCount = (int)($stmt->fetch()['cnt'] ?? 0);
 } catch (PDOException $e) {
@@ -47,7 +50,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && !$blocked) {
 
             if ($user && password_verify($password, $user['password_hash'])) {
                 // Успешный вход — сбрасываем счётчик попыток
-                $stmt = $pdo->prepare("DELETE FROM logs WHERE action = 'login_failed' AND ip_address = ?");
+                $stmt = $pdo->prepare("DELETE FROM login_attempts WHERE ip_address = ?");
                 $stmt->execute([$ip]);
 
                 // Устанавливаем сессию
