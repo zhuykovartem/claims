@@ -43,6 +43,5 @@
 .badge-red    { background-color: #f44336; }
 .badge-purple { background-color: #9c27b0; }
 .badge-green, .badge-yellow, .badge-red, .badge-purple {
-    color: #000 !important;
     font-weight: 600;
 }
