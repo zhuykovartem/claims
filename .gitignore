@@ -1,0 +1,15 @@
+# Секреты — НИКОГДА не коммитить
+.env
+.env.*
+!.env.example
+
+# Пользовательские файлы и кэш
+uploads/
+claims-uploads/
+*.log
+
+# Служебное
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
