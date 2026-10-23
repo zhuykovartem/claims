@@ -32,7 +32,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $object_id        = (int)($_POST['object_id'] ?? 0);
     $applicant        = trim($_POST['applicant'] ?? '');
     $apartment_number = trim($_POST['apartment_number'] ?? '');
-    $direction        = $_POST['direction'] ?? 'incoming';
+    $direction        = in_array($_POST['direction'] ?? '', ['incoming', 'outgoing'], true) ? $_POST['direction'] : 'incoming';
     $received_from    = trim($_POST['received_from'] ?? '');
     $received_date    = $_POST['received_date'] ?? date('Y-m-d');
     $subject          = trim($_POST['subject'] ?? '');
@@ -42,6 +42,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($response_date)) $response_date = null;
     $recipient_id     = !empty($_POST['recipient_id']) ? (int)$_POST['recipient_id'] : null;
 
+    // Валидация дат (сервер не доверяет браузеру)
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$received_date)) {
+        $received_date = date('Y-m-d');
+    }
+    if ($response_date !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$response_date)) {
+        $response_date = null;
+    }
+
     if (empty($object_id)) $error = 'Выберите объект';
     elseif (empty($applicant)) $error = 'Укажите заявителя';
     elseif (empty($subject)) $error = 'Укажите предмет претензии';
@@ -49,18 +57,27 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     if (empty($error)) {
         $claim_file = $claim['claim_file'];
         $response_file = $claim['response_file'];
+        // Запоминаем старые файлы, чтобы удалить их после замены (если они никому больше не нужны)
+        $oldClaimFile = $claim['claim_file'];
+        $oldResponseFile = $claim['response_file'];
         $additional_files = $claim['additional_files'] ? json_decode($claim['additional_files'], true) : [];
-        $uploadDir = __DIR__ . '/uploads/';
-        if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+        $uploadDir = UPLOAD_DIR; // вне корня сайта, отдаётся через download.php
+        if (!is_dir($uploadDir)) @mkdir($uploadDir, 0770, true);
 
         // ===== Файл претензии с MIME-проверкой =====
         if (!empty($_FILES['claim_file']['name'])) {
             if (!isAllowedFileType($_FILES['claim_file']['tmp_name'])) {
                 $error = 'Недопустимый тип файла претензии';
             } else {
-                $ext = pathinfo($_FILES['claim_file']['name'], PATHINFO_EXTENSION);
-                $claim_file = 'claim_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                move_uploaded_file($_FILES['claim_file']['tmp_name'], $uploadDir . $claim_file);
+                $ext = uploadExtension($_FILES['claim_file']['name']);
+                if ($ext === '') {
+                    $error = 'Недопустимое расширение файла претензии (разрешены: pdf, jpg, jpeg, png, gif, doc, docx, xls, xlsx, ppt, pptx, txt)';
+                } else {
+                    $claim_file = 'claim_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                    if (!move_uploaded_file($_FILES['claim_file']['tmp_name'], $uploadDir . $claim_file)) {
+                        $error = 'Не удалось сохранить файл претензии на сервер';
+                    }
+                }
             }
         }
 
@@ -69,9 +86,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!isAllowedFileType($_FILES['response_file']['tmp_name'])) {
                 $error = 'Недопустимый тип файла ответа';
             } else {
-                $ext = pathinfo($_FILES['response_file']['name'], PATHINFO_EXTENSION);
-                $response_file = 'resp_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                move_uploaded_file($_FILES['response_file']['tmp_name'], $uploadDir . $response_file);
+                $ext = uploadExtension($_FILES['response_file']['name']);
+                if ($ext === '') {
+                    $error = 'Недопустимое расширение файла ответа (разрешены: pdf, jpg, jpeg, png, gif, doc, docx, xls, xlsx, ppt, pptx, txt)';
+                } else {
+                    $response_file = 'resp_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                    if (!move_uploaded_file($_FILES['response_file']['tmp_name'], $uploadDir . $response_file)) {
+                        $error = 'Не удалось сохранить файл ответа на сервер';
+                    }
+                }
             }
         }
 
@@ -83,9 +106,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $error = 'Недопустимый тип доп. файла: ' . htmlspecialchars($name);
                         break;
                     }
-                    $ext = pathinfo($name, PATHINFO_EXTENSION);
-                    $fname = 'add_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                    move_uploaded_file($_FILES['additional_files']['tmp_name'][$key], $uploadDir . $fname);
+                    $ext = uploadExtension($name);
+                    if ($ext === '') {
+                        $error = 'Недопустимое расширение доп. файла: ' . $name;
+                        break;
+                    }
+                    $fname = 'add_' . time() . '_' . bin2hex(random_bytes(4)) . '_' . $key . '.' . $ext;
+                    if (!move_uploaded_file($_FILES['additional_files']['tmp_name'][$key], $uploadDir . $fname)) {
+                        $error = 'Не удалось сохранить доп. файл на сервер';
+                        break;
+                    }
                     $additional_files[] = $fname;
                 }
             }
@@ -116,6 +146,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 !empty($additional_files) ? json_encode($additional_files, JSON_UNESCAPED_UNICODE) : null,
                 $id
             ]);
+
+            // Удаляем заменённые старые файлы (если на них не ссылается другая претензия)
+            if ($oldClaimFile && $oldClaimFile !== $claim_file) {
+                deleteUploadIfUnused($pdo, $oldClaimFile, $id);
+            }
+            if ($oldResponseFile && $oldResponseFile !== $response_file) {
+                deleteUploadIfUnused($pdo, $oldResponseFile, $id);
+            }
 
             logAction('update', 'claim', $id, 'Отредактирована претензия: ' . mb_substr($subject, 0, 100));
             header('Location: index.php?updated=1');
@@ -259,7 +297,7 @@ require 'templates/header.php';
                                 </div>
                                 <input type="file" name="claim_file" class="d-none" id="claim_file">
                                 <?php if ($claim['claim_file']): ?>
-                                    <small class="text-muted mt-1 d-block">Текущий: <a href="uploads/<?= rawurlencode($claim['claim_file']) ?>" target="_blank">📎 <?= $claim['claim_file'] ?></a></small>
+                                    <small class="text-muted mt-1 d-block">Текущий: <a href="<?= uploadLink($claim['claim_file']) ?>" target="_blank">📎 <?= $claim['claim_file'] ?></a></small>
                                 <?php endif; ?>
                             </div>
 
@@ -278,7 +316,7 @@ require 'templates/header.php';
                                 </div>
                                 <input type="file" name="response_file" class="d-none" id="response_file">
                                 <?php if ($claim['response_file']): ?>
-                                    <small class="text-muted mt-1 d-block">Текущий: <a href="uploads/<?= rawurlencode($claim['response_file']) ?>" target="_blank">📎 <?= $claim['response_file'] ?></a></small>
+                                    <small class="text-muted mt-1 d-block">Текущий: <a href="<?= uploadLink($claim['response_file']) ?>" target="_blank">📎 <?= $claim['response_file'] ?></a></small>
                                 <?php endif; ?>
                             </div>
 
@@ -299,7 +337,7 @@ require 'templates/header.php';
                                 <?php if (!empty($addFiles)): ?>
                                     <small class="text-muted mt-1 d-block">Текущие:
                                     <?php foreach ($addFiles as $af): ?>
-                                        <a href="uploads/<?= rawurlencode($af) ?>" target="_blank">📎 <?= $af ?></a>
+                                        <a href="<?= uploadLink($af) ?>" target="_blank">📎 <?= $af ?></a>
                                     <?php endforeach; ?>
                                     </small>
                                 <?php endif; ?>

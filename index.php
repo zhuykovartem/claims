@@ -269,10 +269,10 @@ require 'templates/header.php';
                                         </td>
                                         <td>
                                             <?php if ($c['claim_file']): ?>
-                                                <a href="uploads/<?= rawurlencode($c['claim_file']) ?>" target="_blank" class="btn btn-sm btn-outline-danger" title="Претензия"><i class="bi bi-filetype-pdf"></i></a>
+                                                <a href="<?= uploadLink($c['claim_file']) ?>" target="_blank" class="btn btn-sm btn-outline-danger" title="Претензия"><i class="bi bi-filetype-pdf"></i></a>
                                             <?php endif; ?>
                                             <?php if ($c['response_file']): ?>
-                                                <a href="uploads/<?= rawurlencode($c['response_file']) ?>" target="_blank" class="btn btn-sm btn-outline-success" title="Ответ"><i class="bi bi-reply-all"></i></a>
+                                                <a href="<?= uploadLink($c['response_file']) ?>" target="_blank" class="btn btn-sm btn-outline-success" title="Ответ"><i class="bi bi-reply-all"></i></a>
                                             <?php endif; ?>
                                             <?php
                                             $addFiles = $c['additional_files'] ? json_decode($c['additional_files'], true) : [];
@@ -287,7 +287,7 @@ require 'templates/header.php';
                                                     <a href="edit.php?id=<?= $c['id'] ?>" class="btn btn-outline-warning" title="Редактировать"><i class="bi bi-pencil"></i></a>
                                                 <?php endif; ?>
                                                 <?php if (hasRole('admin', 'manager')): ?>
-                                                    <a href="delete.php?id=<?= $c['id'] ?>" class="btn btn-outline-danger" onclick="return confirm('Удалить претензию №<?= getClaimNumber($pdo, $c['id']) ?>?')" title="Удалить"><i class="bi bi-trash"></i></a>
+                                                    <a href="delete.php?id=<?= $c['id'] ?>" class="btn btn-outline-danger" onclick="return confirm('Удалить претензию №<?= $c['id'] ?>?')" title="Удалить"><i class="bi bi-trash"></i></a>
                                                 <?php endif; ?>
                                             </div>
                                         </td>

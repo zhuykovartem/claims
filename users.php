@@ -18,17 +18,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_user']) && $is
     $username   = trim($_POST['username'] ?? '');
     $password   = $_POST['password'] ?? '';
     $full_name  = trim($_POST['full_name'] ?? '');
-    $role       = $_POST['role'] ?? 'viewer';
+    $role       = in_array($_POST['role'] ?? '', ['admin', 'manager', 'viewer'], true) ? $_POST['role'] : 'viewer';
     $is_active  = isset($_POST['is_active']) ? 1 : 0;
 
     if (empty($username)) {
         $error = 'Логин обязателен';
-    } elseif (strlen($username) < 3) {
+    } elseif (mb_strlen($username) < 3) {
         $error = 'Логин должен быть минимум 3 символа';
     } elseif (empty($password)) {
         $error = 'Пароль обязателен';
-    } elseif (strlen($password) < 4) {
-        $error = 'Пароль должен быть минимум 4 символа';
+    } elseif (mb_strlen($password) < 8) {
+        $error = 'Пароль должен быть минимум 8 символов';
     } else {
         $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ?");
         $stmt->execute([$username]);
@@ -48,15 +48,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_user']) && $is
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
     $targetUserId = (int)($_POST['user_id'] ?? 0);
     $newPassword  = $_POST['new_password'] ?? '';
+    $oldPassword  = $_POST['current_password'] ?? '';
 
-    $canChange = ($isAdmin || $targetUserId === $_SESSION['user_id']);
+    $isSelf    = ($targetUserId === (int)$_SESSION['user_id']);
+    $canChange = ($isAdmin || $isSelf);
 
     if (!$canChange) {
         $error = 'У вас нет прав на смену пароля этого пользователя';
+    } elseif ($targetUserId <= 0) {
+        $error = 'Выберите пользователя';
     } elseif (empty($newPassword)) {
         $error = 'Введите новый пароль';
-    } elseif (strlen($newPassword) < 4) {
-        $error = 'Пароль должен быть минимум 4 символа';
+    } elseif (mb_strlen($newPassword) < 8) {
+        $error = 'Пароль должен быть минимум 8 символов';
+    } elseif ($isSelf && !password_verify($oldPassword, (string)($user['password_hash'] ?? ''))) {
+        // При смене пароля себе требуем текущий пароль:
+        // защита от угона сессии (злоумышленник не знает старый пароль)
+        $error = 'Текущий пароль указан неверно';
     } else {
         $hash = password_hash($newPassword, PASSWORD_DEFAULT);
         $stmt = $pdo->prepare("UPDATE users SET password_hash = ? WHERE id = ?");
@@ -167,7 +175,8 @@ require 'templates/header.php';
                                 </div>
                                 <div class="mb-3 password-field">
                                     <label class="form-label fw-semibold">Пароль <span class="text-danger">*</span></label>
-                                    <input type="password" name="password" class="form-control" required minlength="4" id="newPass">
+                                    <input type="password" name="password" class="form-control" required minlength="8" autocomplete="new-password" id="newPass">
+                                    <small class="text-muted">Минимум 8 символов</small>
                                     <button type="button" class="toggle-password" onclick="togglePass('newPass', this)">
                                         <i class="bi bi-eye"></i>
                                     </button>
@@ -219,8 +228,16 @@ require 'templates/header.php';
                                     </select>
                                 </div>
                                 <div class="mb-3 password-field">
+                                    <label class="form-label fw-semibold">Текущий пароль <small class="text-muted">(при смене себе)</small></label>
+                                    <input type="password" name="current_password" class="form-control" autocomplete="current-password" id="curPass">
+                                    <button type="button" class="toggle-password" onclick="togglePass('curPass', this)">
+                                        <i class="bi bi-eye"></i>
+                                    </button>
+                                </div>
+                                <div class="mb-3 password-field">
                                     <label class="form-label fw-semibold">Новый пароль <span class="text-danger">*</span></label>
-                                    <input type="password" name="new_password" class="form-control" required minlength="4" id="changePass">
+                                    <input type="password" name="new_password" class="form-control" required minlength="8" autocomplete="new-password" id="changePass">
+                                    <small class="text-muted">Минимум 8 символов</small>
                                     <button type="button" class="toggle-password" onclick="togglePass('changePass', this)">
                                         <i class="bi bi-eye"></i>
                                     </button>

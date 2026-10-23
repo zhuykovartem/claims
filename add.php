@@ -15,7 +15,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $object_id        = (int)($_POST['object_id'] ?? 0);
     $applicant        = trim($_POST['applicant'] ?? '');
     $apartment_number = trim($_POST['apartment_number'] ?? '');
-    $direction        = $_POST['direction'] ?? 'incoming';
+    $direction        = in_array($_POST['direction'] ?? '', ['incoming', 'outgoing'], true) ? $_POST['direction'] : 'incoming';
     $received_from    = trim($_POST['received_from'] ?? '');
     $received_date    = $_POST['received_date'] ?? date('Y-m-d');
     $subject          = trim($_POST['subject'] ?? '');
@@ -24,6 +24,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $response_date    = $_POST['response_date'] ?? null;
     if (empty($response_date)) $response_date = null;
     $recipient_id     = !empty($_POST['recipient_id']) ? (int)$_POST['recipient_id'] : null;
+
+    // Валидация дат (сервер не доверяет браузеру)
+    if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$received_date)) {
+        $received_date = date('Y-m-d');
+    }
+    if ($response_date !== null && !preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$response_date)) {
+        $response_date = null;
+    }
 
     if (empty($object_id)) {
         $error = 'Выберите объект';
@@ -38,9 +46,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $additional_files = [];
 
     if (empty($error)) {
-        $uploadDir = __DIR__ . '/uploads/';
+        $uploadDir = UPLOAD_DIR; // вне корня сайта, отдаётся через download.php
         if (!is_dir($uploadDir)) {
-            mkdir($uploadDir, 0755, true);
+            @mkdir($uploadDir, 0770, true);
         }
 
         // ===== Файл претензии с MIME-проверкой =====
@@ -49,9 +57,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!isAllowedFileType($tmp)) {
                 $error = 'Недопустимый тип файла претензии';
             } else {
-                $ext = pathinfo($_FILES['claim_file']['name'], PATHINFO_EXTENSION);
-                $claim_file = 'claim_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                move_uploaded_file($tmp, $uploadDir . $claim_file);
+                $ext = uploadExtension($_FILES['claim_file']['name']);
+                if ($ext === '') {
+                    $error = 'Недопустимое расширение файла претензии (разрешены: pdf, jpg, jpeg, png, gif, doc, docx, xls, xlsx, ppt, pptx, txt)';
+                } else {
+                    $claim_file = 'claim_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                    if (!move_uploaded_file($tmp, $uploadDir . $claim_file)) {
+                        $error = 'Не удалось сохранить файл претензии на сервер';
+                    }
+                }
             }
         }
 
@@ -61,9 +75,15 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (!isAllowedFileType($tmp)) {
                 $error = 'Недопустимый тип файла ответа';
             } else {
-                $ext = pathinfo($_FILES['response_file']['name'], PATHINFO_EXTENSION);
-                $response_file = 'resp_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                move_uploaded_file($tmp, $uploadDir . $response_file);
+                $ext = uploadExtension($_FILES['response_file']['name']);
+                if ($ext === '') {
+                    $error = 'Недопустимое расширение файла ответа (разрешены: pdf, jpg, jpeg, png, gif, doc, docx, xls, xlsx, ppt, pptx, txt)';
+                } else {
+                    $response_file = 'resp_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
+                    if (!move_uploaded_file($tmp, $uploadDir . $response_file)) {
+                        $error = 'Не удалось сохранить файл ответа на сервер';
+                    }
+                }
             }
         }
 
@@ -76,9 +96,16 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $error = 'Недопустимый тип доп. файла: ' . htmlspecialchars($name);
                         break;
                     }
-                    $ext = pathinfo($name, PATHINFO_EXTENSION);
-                    $fname = 'add_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                    move_uploaded_file($tmp, $uploadDir . $fname);
+                    $ext = uploadExtension($name);
+                    if ($ext === '') {
+                        $error = 'Недопустимое расширение доп. файла: ' . $name;
+                        break;
+                    }
+                    $fname = 'add_' . time() . '_' . bin2hex(random_bytes(4)) . '_' . $key . '.' . $ext;
+                    if (!move_uploaded_file($tmp, $uploadDir . $fname)) {
+                        $error = 'Не удалось сохранить доп. файл на сервер';
+                        break;
+                    }
                     $additional_files[] = $fname;
                 }
             }

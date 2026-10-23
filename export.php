@@ -24,7 +24,7 @@ if (empty($claims)) {
     die('❌ Нет претензий для экспорта');
 }
 
-$uploadDir = __DIR__ . '/uploads/';
+$uploadDir = UPLOAD_DIR; // файлы теперь хранятся вне корня сайта
 $tmpDir = sys_get_temp_dir() . '/claim_export_' . time();
 @mkdir($tmpDir, 0755, true);
 
@@ -101,19 +101,19 @@ foreach ($claims as $c) {
     $meta .= "additional_files = " . implode(', ', $addFilesInFolder) . "\n";
     file_put_contents($claimDir . '/meta.ini', $meta);
 
-    // Строка для сводного CSV
+    // Строка для сводного CSV (csvSafe — защита от CSV-инъекции: ячейки, начинающиеся с = + - @)
     $csvLines[] = [
         $c['id'],
         $objectNameMap[$c['object_id']] ?? '',
-        $c['applicant'],
+        csvSafe($c['applicant']),
         $c['apartment_number'] ?? '',
         $c['direction'],
-        $c['received_from'] ?? '',
+        csvSafe($c['received_from'] ?? ''),
         $c['received_date'] ?? '',
-        $c['subject'],
-        $c['current_status'] ?? '',
-        $c['recipient_name'] ?? '',
-        $c['response_direction'] ?? '',
+        csvSafe($c['subject']),
+        csvSafe($c['current_status'] ?? ''),
+        csvSafe($c['recipient_name'] ?? ''),
+        csvSafe($c['response_direction'] ?? ''),
         $c['response_date'] ?? '',
         $claimFileInFolder,
         $responseFileInFolder,
@@ -156,6 +156,8 @@ foreach ($dirIt as $entry) {
 $zip->close();
 
 // ===== Отдаём пользователю =====
+logAction('export', 'claim', null, 'Экспорт в ZIP: ' . count($claims) . ' претензий' . ($objectFilter ? ' (объект ID ' . (int)$objectFilter . ')' : ''));
+
 $filename = 'claims_export_' . date('Y-m-d') . '.zip';
 header('Content-Type: application/zip');
 header('Content-Disposition: attachment; filename="' . $filename . '"');

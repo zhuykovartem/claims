@@ -69,6 +69,7 @@ require 'templates/header.php';
         </small>
     </div>
     <div>
+        <?php if (hasRole('admin', 'manager')): ?>
         <a href="edit.php?id=<?= $c['id'] ?>" class="btn btn-warning">
             <i class="bi bi-pencil"></i> Редактировать
         </a>
@@ -76,6 +77,7 @@ require 'templates/header.php';
            onclick="return confirm('Вы уверены, что хотите удалить претензию №<?= $c['id'] ?>?')">
             <i class="bi bi-trash"></i> Удалить
         </a>
+        <?php endif; ?>
         <a href="index.php" class="btn btn-outline-secondary">
             <i class="bi bi-arrow-left"></i> Реестр
         </a>
@@ -253,7 +255,7 @@ require 'templates/header.php';
                         <small class="text-muted text-truncate d-block mb-2" style="max-width:100%;">
                             <?= htmlspecialchars(basename($c['claim_file'])) ?>
                         </small>
-                        <a href="uploads/<?= rawurlencode($c['claim_file']) ?>" target="_blank"
+                        <a href="<?= uploadLink($c['claim_file']) ?>" target="_blank"
                            class="btn btn-sm btn-danger mt-auto">
                             <i class="bi bi-eye"></i> Открыть файл
                         </a>
@@ -271,7 +273,7 @@ require 'templates/header.php';
                         <small class="text-muted text-truncate d-block mb-2" style="max-width:100%;">
                             <?= htmlspecialchars(basename($c['response_file'])) ?>
                         </small>
-                        <a href="uploads/<?= rawurlencode($c['response_file']) ?>" target="_blank"
+                        <a href="<?= uploadLink($c['response_file']) ?>" target="_blank"
                            class="btn btn-sm btn-success mt-auto">
                             <i class="bi bi-eye"></i> Открыть файл
                         </a>
@@ -290,7 +292,7 @@ require 'templates/header.php';
                             <small class="text-muted text-truncate d-block mb-2" style="max-width:100%;">
                                 <?= htmlspecialchars(basename($f)) ?>
                             </small>
-                            <a href="uploads/<?= rawurlencode($f) ?>" target="_blank"
+                            <a href="<?= uploadLink($f) ?>" target="_blank"
                                class="btn btn-sm btn-secondary mt-auto">
                                 <i class="bi bi-eye"></i> Открыть файл
                             </a>
@@ -316,6 +318,7 @@ require 'templates/header.php';
 
 <!-- Блок быстрых действий -->
 <div class="mt-4 d-flex gap-2">
+    <?php if (hasRole('admin', 'manager')): ?>
     <a href="edit.php?id=<?= $c['id'] ?>" class="btn btn-warning">
         <i class="bi bi-pencil"></i> Редактировать
     </a>
@@ -328,6 +331,7 @@ require 'templates/header.php';
        onclick="return confirm('Удалить претензию №<?= $c['id'] ?>? Это действие необратимо.')">
         <i class="bi bi-trash"></i> Удалить
     </a>
+    <?php endif; ?>
     <a href="index.php" class="btn btn-outline-secondary ms-auto">
         <i class="bi bi-arrow-left"></i> Назад к реестру
     </a>

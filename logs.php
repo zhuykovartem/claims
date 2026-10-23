@@ -6,6 +6,14 @@ $user = currentUser();
 $isAdmin = hasRole('admin');
 $isManager = hasRole('manager');
 
+// Гард для GET-параметров: ?action[]=x больше не ломает страницу (500)
+$g = fn(string $key): string => isset($_GET[$key]) && is_string($_GET[$key]) ? $_GET[$key] : '';
+$actionFilter   = $g('action');
+$userFilter     = $g('user_id');
+$entityFilter   = $g('entity_type');
+$dateFromFilter = $g('date_from');
+$dateToFilter   = $g('date_to');
+
 // Параметры фильтрации + пагинация
 $page = max(1, (int)($_GET['page'] ?? 1));
 $perPage = max(10, min(999999, (int)($_GET['per_page'] ?? 50)));
@@ -14,25 +22,25 @@ $offset = ($page - 1) * $perPage;
 $where = [];
 $params = [];
 
-if (!empty($_GET['action'])) {
+if ($actionFilter !== '') {
     $where[] = 'l.action = ?';
-    $params[] = $_GET['action'];
+    $params[] = $actionFilter;
 }
-if (!empty($_GET['user_id'])) {
+if ($userFilter !== '' && (int)$userFilter > 0) {
     $where[] = 'l.user_id = ?';
-    $params[] = (int)$_GET['user_id'];
+    $params[] = (int)$userFilter;
 }
-if (!empty($_GET['entity_type'])) {
+if ($entityFilter !== '') {
     $where[] = 'l.entity_type = ?';
-    $params[] = $_GET['entity_type'];
+    $params[] = $entityFilter;
 }
-if (!empty($_GET['date_from'])) {
+if ($dateFromFilter !== '') {
     $where[] = 'l.created_at >= ?';
-    $params[] = $_GET['date_from'] . ' 00:00:00';
+    $params[] = $dateFromFilter . ' 00:00:00';
 }
-if (!empty($_GET['date_to'])) {
+if ($dateToFilter !== '') {
     $where[] = 'l.created_at <= ?';
-    $params[] = $_GET['date_to'] . ' 23:59:59';
+    $params[] = $dateToFilter . ' 23:59:59';
 }
 
 $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
@@ -101,7 +109,7 @@ require 'templates/header.php';
                             <select name="action" class="form-select form-select-sm">
                                 <option value="">— Все —</option>
                                 <?php foreach ($actions as $a): ?>
-                                    <option value="<?= $a ?>" <?= ($_GET['action'] ?? '') === $a ? 'selected' : '' ?>>
+                                    <option value="<?= $a ?>" <?= $actionFilter === $a ? 'selected' : '' ?>>
                                         <?= ($actionIcons[$a] ?? '•') . ' ' . $a ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -112,7 +120,7 @@ require 'templates/header.php';
                             <select name="user_id" class="form-select form-select-sm">
                                 <option value="">— Все —</option>
                                 <?php foreach ($users as $u): ?>
-                                    <option value="<?= $u['id'] ?>" <?= ($_GET['user_id'] ?? '') == $u['id'] ? 'selected' : '' ?>>
+                                    <option value="<?= $u['id'] ?>" <?= $userFilter == $u['id'] ? 'selected' : '' ?>>
                                         <?= htmlspecialchars($u['username']) ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -123,7 +131,7 @@ require 'templates/header.php';
                             <select name="entity_type" class="form-select form-select-sm">
                                 <option value="">— Все —</option>
                                 <?php foreach ($entityTypes as $et): ?>
-                                    <option value="<?= $et ?>" <?= ($_GET['entity_type'] ?? '') === $et ? 'selected' : '' ?>>
+                                    <option value="<?= $et ?>" <?= $entityFilter === $et ? 'selected' : '' ?>>
                                         <?= $entityLabels[$et] ?? $et ?>
                                     </option>
                                 <?php endforeach; ?>
@@ -131,11 +139,11 @@ require 'templates/header.php';
                         </div>
                         <div class="col-md-2">
                             <label class="form-label small">Дата с</label>
-                            <input type="date" name="date_from" class="form-control form-control-sm" value="<?= $_GET['date_from'] ?? '' ?>">
+                            <input type="date" name="date_from" class="form-control form-control-sm" value="<?= $dateFromFilter ?>">
                         </div>
                         <div class="col-md-2">
                             <label class="form-label small">Дата по</label>
-                            <input type="date" name="date_to" class="form-control form-control-sm" value="<?= $_GET['date_to'] ?? '' ?>">
+                            <input type="date" name="date_to" class="form-control form-control-sm" value="<?= $dateToFilter ?>">
                         </div>
                         <div class="col-md-2">
                             <button type="submit" class="btn btn-primary btn-sm w-100"><i class="bi bi-search"></i> Поиск</button>
@@ -219,9 +227,8 @@ require 'templates/header.php';
                         <small class="text-muted">Страница <?= $page ?> из <?= $totalPages ?></small>
                         <form method="GET" class="d-inline-block">
                             <?php foreach ($_GET as $k => $v): ?>
-                                <?php if ($k !== 'per_page' && $k !== 'page'): ?>
+                                <?php if (!is_string($v) || ($k === 'per_page' || $k === 'page')) continue; ?>
                                     <input type="hidden" name="<?= htmlspecialchars($k) ?>" value="<?= htmlspecialchars($v) ?>">
-                                <?php endif; ?>
                             <?php endforeach; ?>
                             <div class="input-group input-group-sm">
                                 <span class="input-group-text">Показывать</span>

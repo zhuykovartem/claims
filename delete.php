@@ -21,22 +21,14 @@ $additionalFiles = $delClaim['additional_files'] ? json_decode($delClaim['additi
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requireCsrfToken();
 
-    // Удаляем файлы с диска
-    $uploadDir = __DIR__ . '/uploads/';
-
-    if ($delClaim['claim_file'] && file_exists($uploadDir . $delClaim['claim_file'])) {
-        unlink($uploadDir . $delClaim['claim_file']);
-    }
-    if ($delClaim['response_file'] && file_exists($uploadDir . $delClaim['response_file'])) {
-        unlink($uploadDir . $delClaim['response_file']);
-    }
+    // Удаляем файлы с диска ТОЛЬКО если на них не ссылается другая претензия
+    // (один файл может быть прикреплён к нескольким записям после импорта)
+    deleteUploadIfUnused($pdo, $delClaim['claim_file'], $id);
+    deleteUploadIfUnused($pdo, $delClaim['response_file'], $id);
 
     if (is_array($additionalFiles)) {
         foreach ($additionalFiles as $f) {
-            $path = $uploadDir . $f;
-            if (file_exists($path)) {
-                unlink($path);
-            }
+            deleteUploadIfUnused($pdo, (string)$f, $id);
         }
     }
 

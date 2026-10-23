@@ -58,13 +58,24 @@ function resolveRecipient(PDO $pdo, $companyName) {
     return null;
 }
 
-// Скопировать файл в /uploads/ с оригинальным именем (не перезаписывая)
+// Скопировать файл в папку загрузок с оригинальным именем (не перезаписывая).
+// Копируются только файлы с разрешённым расширением (ALLOWED_IMPORT_EXTENSIONS):
+// защита от попадания в систему php/exe/html и прочих опасных файлов из архива.
 function copyImportFile($sourcePath, $uploadDir) {
+    global $st;
     if (!file_exists($sourcePath)) return null;
     $origName = basename($sourcePath);
+    $ext = strtolower(pathinfo($origName, PATHINFO_EXTENSION));
+    if (!in_array($ext, ALLOWED_IMPORT_EXTENSIONS, true)) {
+        $st['fileWarnings'][] = "⛔ Файл «{$origName}» пропущен: недопустимое расширение";
+        return null;
+    }
     $destPath = $uploadDir . $origName;
     if (!file_exists($destPath)) {
-        copy($sourcePath, $destPath);
+        if (!@copy($sourcePath, $destPath)) {
+            $st['fileWarnings'][] = "⛔ Файл «{$origName}» не удалось скопировать в папку загрузок";
+            return null;
+        }
     }
     return $origName;
 }
@@ -449,11 +460,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['import_file']) && $_
     $fileName = $_FILES['import_file']['name'];
     $ext = strtolower(pathinfo($fileName, PATHINFO_EXTENSION));
 
-    $uploadDir = __DIR__ . '/uploads/';
+    $uploadDir = UPLOAD_DIR; // вне корня сайта, отдаётся через download.php
     $tmpDir = sys_get_temp_dir() . '/claim_import_' . uniqid();
 
     try {
-        if (!is_dir($uploadDir)) mkdir($uploadDir, 0755, true);
+        if (!is_dir($uploadDir)) @mkdir($uploadDir, 0770, true);
         $pdo->beginTransaction();
 
         // ===============================================================
@@ -580,6 +591,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['import_file']) && $_
                                 foreach (new FilesystemIterator($archiveFilesDir) as $file) {
                                     if (!$file->isFile()) continue;
                                     $fname = $file->getFilename();
+                                    // Whitelist расширений — опасные файлы из архива не копируем
+                                    if (!in_array(strtolower(pathinfo($fname, PATHINFO_EXTENSION)), ALLOWED_IMPORT_EXTENSIONS, true)) {
+                                        $st['fileWarnings'][] = "⛔ Файл «{$fname}» из архива пропущен: недопустимое расширение";
+                                        continue;
+                                    }
                                     if (!file_exists($uploadDir . $fname)) {
                                         copy($file->getPathname(), $uploadDir . $fname);
                                     }

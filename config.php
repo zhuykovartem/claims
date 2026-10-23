@@ -51,6 +51,15 @@ if (!empty($missing)) {
     die('❌ В .env не заполнены: ' . implode(', ', $missing));
 }
 
+// ===== Папка загрузок (ВНЕ корня сайта!) =====
+// По умолчанию: /var/www/claims-uploads (рядом с папкой html).
+// Можно переопределить в .env строкой: UPLOAD_DIR=/var/www/claims-uploads
+$uploadDirConfig = $env['UPLOAD_DIR'] ?? dirname(__DIR__) . '/claims-uploads';
+define('UPLOAD_DIR', rtrim($uploadDirConfig, '/\\') . '/');
+if (!is_dir(UPLOAD_DIR)) {
+    @mkdir(UPLOAD_DIR, 0770, true);
+}
+
 // ===== Настройки сессии =====
 ini_set('session.use_strict_mode', 1);
 ini_set('session.use_only_cookies', 1);
@@ -288,4 +297,62 @@ function getCompanyObjectRole($pdo, $objectId, $companyId) {
     $stmt = $pdo->prepare("SELECT role FROM object_companies WHERE object_id=? AND company_id=?");
     $stmt->execute([$objectId, $companyId]);
     return $stmt->fetchColumn();
+}
+
+// ===== Безопасность файлов =====
+// Whitelist расширений для загрузки через формы add.php/edit.php (зеркалит isAllowedFileType)
+const ALLOWED_UPLOAD_EXTENSIONS = ['pdf','jpg','jpeg','png','gif','doc','docx','xls','xlsx','ppt','pptx','txt'];
+
+// Расширенный список для импорта из архива (файлы хранятся вне webroot и
+// отдаются через download.php, поэтому исполняемыми быть не могут в принципе)
+const ALLOWED_IMPORT_EXTENSIONS = [
+    'pdf','doc','docx','xls','xlsx','ppt','pptx','odt','ods','odp','rtf','txt',
+    'jpg','jpeg','png','gif','bmp','tif','tiff','heic','zip','rar','7z','msg','eml',
+];
+
+// Возвращает нормализованное расширение файла, если оно в whitelist, иначе ''
+function uploadExtension(string $originalName, array $allowed = ALLOWED_UPLOAD_EXTENSIONS): string {
+    $ext = strtolower(pathinfo($originalName, PATHINFO_EXTENSION));
+    return in_array($ext, $allowed, true) ? $ext : '';
+}
+
+// Ссылка на файл через защищённый шлюз download.php (с проверкой авторизации)
+function uploadLink($fileName): string {
+    return 'download.php?file=' . rawurlencode(basename((string)$fileName));
+}
+
+// Используется ли файл другими претензиями (кроме исключаемой)
+function claimFileInUse(PDO $pdo, string $fileName, int $excludeClaimId = 0): bool {
+    if ($fileName === '') return false;
+    $fileName = basename($fileName);
+    $like = '%' . addcslashes($fileName, '\\%_') . '%';
+    $sql = "SELECT COUNT(*) FROM claims
+            WHERE claim_file = ? OR response_file = ? OR additional_files LIKE ?";
+    $params = [$fileName, $fileName, $like];
+    if ($excludeClaimId > 0) {
+        $sql .= " AND id != ?";
+        $params[] = $excludeClaimId;
+    }
+    $stmt = $pdo->prepare($sql);
+    $stmt->execute($params);
+    return (int)$stmt->fetchColumn() > 0;
+}
+
+// Удалить файл с диска, если на него больше не ссылается ни одна претензия
+function deleteUploadIfUnused(PDO $pdo, ?string $fileName, int $excludeClaimId = 0): void {
+    if ($fileName === null || $fileName === '') return;
+    if (claimFileInUse($pdo, $fileName, $excludeClaimId)) return;
+    $path = UPLOAD_DIR . basename($fileName);
+    if (is_file($path)) { @unlink($path); }
+    // Переходный период: старая папка в webroot (можно убрать после переноса файлов)
+    $legacyPath = __DIR__ . '/uploads/' . basename($fileName);
+    if (is_file($legacyPath)) { @unlink($legacyPath); }
+}
+
+// Защита от CSV-инъекции: экранирование ячеек, начинающихся с = + - @ и табуляции
+function csvSafe($value) {
+    if (is_string($value) && $value !== '' && in_array($value[0], ['=', '+', '-', '@', "\t", "\r"], true)) {
+        return "'" . $value;
+    }
+    return $value;
 }
