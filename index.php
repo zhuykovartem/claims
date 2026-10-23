@@ -114,10 +114,8 @@ $extraHead = <<<'HEAD'
 .row-yellow { background-color: #fff8e1 !important; }
 .row-red    { background-color: #ffebee !important; }
 .row-purple { background-color: #f3e5f5 !important; }
-.badge-green  { background-color: #4caf50; }
-.badge-yellow { background-color: #ff9800; color: #000; }
-.badge-red    { background-color: #f44336; }
-.badge-purple { background-color: #9c27b0; }
+/* .badge-green/yellow/red/purple теперь глобально в assets/style.css —
+   дубли здесь убраны, чтобы не переопределять общий стиль бейджей */
 .legend-dot { display: inline-block; width: 12px; height: 12px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 </style>
 HEAD;
