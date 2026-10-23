@@ -166,6 +166,10 @@ require 'templates/header.php';
                         <th>Дата ответа</th>
                         <td><?= $c['response_date'] ? date('d.m.Y', strtotime($c['response_date'])) : '—' ?></td>
                     </tr>
+                    <tr>
+                        <th>Дополнительно</th>
+                        <td class="text-wrap"><?= $c['additional_notes'] ? nl2br(htmlspecialchars($c['additional_notes'])) : '—' ?></td>
+                    </tr>
                 </table>
             </div>
         </div>

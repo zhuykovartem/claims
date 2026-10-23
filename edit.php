@@ -41,6 +41,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     $response_date    = $_POST['response_date'] ?? null;
     if (empty($response_date)) $response_date = null;
     $recipient_id     = !empty($_POST['recipient_id']) ? (int)$_POST['recipient_id'] : null;
+    $additional_notes = trim($_POST['additional_notes'] ?? '');
 
     // Валидация дат (сервер не доверяет браузеру)
     if (!preg_match('/^\d{4}-\d{2}-\d{2}$/', (string)$received_date)) {
@@ -125,6 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $stmt = $pdo->prepare("UPDATE claims SET
                 object_id = ?, applicant = ?, apartment_number = ?, direction = ?,
                 received_from = ?, received_date = ?, subject = ?, current_status = ?,
+                additional_notes = ?,
                 response_direction = ?, response_date = ?, recipient_id = ?,
                 claim_file = ?, response_file = ?, additional_files = ?
                 WHERE id = ?");
@@ -138,6 +140,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                 $received_date,
                 $subject,
                 $current_status,
+                $additional_notes ?: null,
                 $response_direction ?: null,
                 $response_date,
                 $recipient_id,
@@ -287,6 +290,11 @@ require 'templates/header.php';
                                 <select name="recipient_id" class="form-select" id="editRecipientSelect">
                                     <option value="">— Сначала выберите объект —</option>
                                 </select>
+                            </div>
+
+                            <div class="col-12">
+                                <label class="form-label fw-semibold">📝 Дополнительно <small class="text-muted fw-normal">(заметки, нестандартные ситуации)</small></label>
+                                <textarea name="additional_notes" class="form-control" rows="2" placeholder="Свободные заметки по претензии: договорённости, особые условия, ссылки на связанные документы и т.п."><?= htmlspecialchars($claim['additional_notes'] ?? '') ?></textarea>
                             </div>
 
                             <div class="col-md-5">

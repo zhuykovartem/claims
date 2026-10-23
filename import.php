@@ -227,6 +227,7 @@ $fieldMap = [
     'received_date'     => ['дата поступления', 'received_date', 'дата'],
     'subject'           => ['предмет претензии', 'subject', 'претензия', 'предмет'],
     'current_status'    => ['текущий статус', 'current_status', 'статус', 'текущее состояние', 'текщее состояние', 'состояние'],
+    'additional_notes'  => ['дополнительно', 'additional_notes', 'заметки', 'примечание', 'комментарий'],
     'response_direction'=> ['направление ответа', 'куда направлен ответ', 'response_direction'],
     'response_date'     => ['дата ответа', 'response_date'],
     'claim_file'        => ['файл претензии', 'claim_file', 'текст претензии'],
@@ -257,12 +258,12 @@ function impInsertClaim(PDO $pdo, array $d) {
     static $stmt = null;
     if ($stmt === null) {
         $stmt = $pdo->prepare("INSERT INTO claims
-            (object_id, applicant, apartment_number, direction, received_from, received_date, subject, current_status, response_direction, response_date, recipient_id, claim_file, response_file, additional_files, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
+            (object_id, applicant, apartment_number, direction, received_from, received_date, subject, current_status, additional_notes, response_direction, response_date, recipient_id, claim_file, response_file, additional_files, created_by)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     }
     $stmt->execute([
         $d['object_id'], $d['applicant'], $d['apartment_number'], $d['direction'], $d['received_from'],
-        $d['received_date'], $d['subject'], $d['current_status'], $d['response_direction'], $d['response_date'],
+        $d['received_date'], $d['subject'], $d['current_status'], $d['additional_notes'] ?? null, $d['response_direction'], $d['response_date'],
         $d['recipient_id'], $d['claim_file'], $d['response_file'],
         !empty($d['additional_files']) ? json_encode(array_values($d['additional_files']), JSON_UNESCAPED_UNICODE) : null,
         $_SESSION['user_id'],
@@ -411,6 +412,7 @@ function impImportCsvRows(PDO $pdo, array $rows, array $fieldMap, $uploadDir, $f
             'received_date'      => normalizeDate($receivedDateRaw) ?: date('Y-m-d'),
             'subject'            => $subject,
             'current_status'     => $status !== '' ? $status : 'Импортировано',
+            'additional_notes'   => impCell($row, $colIdx, 'additional_notes') ?: null,
             'response_direction' => impCell($row, $colIdx, 'response_direction') ?: null,
             'response_date'      => normalizeDate(impCell($row, $colIdx, 'response_date')) ?: null,
             'recipient_id'       => $recipientId,
@@ -559,6 +561,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['import_file']) && $_
                             'received_date'      => normalizeDate($meta['received_date'] ?? '') ?: date('Y-m-d'),
                             'subject'            => $subject,
                             'current_status'     => ($meta['current_status'] ?? '') ?: 'Импортировано',
+                            'additional_notes'   => ($meta['additional_notes'] ?? '') ?: null,
                             'response_direction' => ($meta['response_direction'] ?? '') ?: null,
                             'response_date'      => normalizeDate($meta['response_date'] ?? '') ?: null,
                             'recipient_id'       => resolveRecipient($pdo, $meta['recipient'] ?? $meta['recipient_id'] ?? $meta['company'] ?? ''),

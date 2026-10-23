@@ -33,7 +33,7 @@ $csvLines[] = [
     'ID', 'Объект', 'Заявитель', '№ квартиры', 'Направление',
     'От кого получено', 'Дата поступления', 'Предмет претензии',
     'Текущий статус', 'Получатель (компания)', 'Направление ответа', 'Дата ответа',
-    'Файл претензии', 'Файл ответа', 'Доп. файлы', 'Дней', 'Статус срока'
+    'Файл претензии', 'Файл ответа', 'Доп. файлы', 'Дней', 'Статус срока', 'Дополнительно'
 ];
 
 $objectNameMap = [];
@@ -91,6 +91,8 @@ foreach ($claims as $c) {
     $meta .= "received_date = " . ($c['received_date'] ?? '') . "\n";
     $meta .= "subject = " . $c['subject'] . "\n";
     $meta .= "current_status = " . ($c['current_status'] ?? '') . "\n";
+    // В INI нельзя переносить строки (parse_ini_file сломается) — сплющиваем в одну строку
+    $meta .= "additional_notes = " . str_replace(["\r\n", "\n", "\r"], ' | ', (string)($c['additional_notes'] ?? '')) . "\n";
     $meta .= "recipient = " . ($c['recipient_name'] ?? '') . "\n";
     $meta .= "response_direction = " . ($c['response_direction'] ?? '') . "\n";
     $meta .= "response_date = " . ($c['response_date'] ?? '') . "\n";
@@ -120,6 +122,7 @@ foreach ($claims as $c) {
         implode('; ', $addFilesInFolder),
         $days,
         $statusLabel,
+        csvSafe($c['additional_notes'] ?? ''),
     ];
 }
 
