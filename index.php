@@ -34,42 +34,54 @@ if ($statusFilter) {
 
 $whereSql = $where ? 'WHERE ' . implode(' AND ', $where) : '';
 
-$allClaims = $pdo->prepare("SELECT c.*, o.name as object_name, u.full_name as created_by_name, comp.name as recipient_name
-    FROM claims c
+// Цвет срока — та же логика, что getClaimStatusColor(), но силами MySQL:
+// это позволяет фильтровать, считать статистику и пагинировать на стороне БД
+$statusColorSql = "CASE
+    WHEN c.response_date IS NOT NULL AND c.response_date <> '' THEN 'green'
+    WHEN COALESCE(c.received_date, '') = '' THEN 'green'
+    WHEN DATEDIFF(CURDATE(), c.received_date) < 10 THEN 'green'
+    WHEN DATEDIFF(CURDATE(), c.received_date) < 20 THEN 'yellow'
+    WHEN DATEDIFF(CURDATE(), c.received_date) < 30 THEN 'red'
+    ELSE 'purple'
+END";
+
+if (in_array($colorFilter, ['green', 'yellow', 'red', 'purple'], true)) {
+    $where[] = "$statusColorSql = ?";
+    $params[] = $colorFilter;
+    $whereSql = 'WHERE ' . implode(' AND ', $where);
+}
+
+$fromSql = "FROM claims c
     LEFT JOIN objects o ON c.object_id = o.id
     LEFT JOIN users u ON c.created_by = u.id
-    LEFT JOIN companies comp ON c.recipient_id = comp.id
-    $whereSql ORDER BY c.created_at DESC");
-$allClaims->execute($params);
-$allClaims = $allClaims->fetchAll();
+    LEFT JOIN companies comp ON c.recipient_id = comp.id";
 
-if ($colorFilter) {
-    $filtered = [];
-    foreach ($allClaims as $c) {
-        if (getClaimStatusColor($c) === $colorFilter) {
-            $filtered[] = $c;
-        }
-    }
-    $allClaims = $filtered;
-}
+// Счётчик и статистика по цветам — один агрегатный запрос вместо выборки всех строк
+$statsStmt = $pdo->prepare("SELECT COUNT(*) AS total,
+        COALESCE(SUM($statusColorSql = 'green'), 0)  AS green,
+        COALESCE(SUM($statusColorSql = 'yellow'), 0) AS yellow,
+        COALESCE(SUM($statusColorSql = 'red'), 0)    AS red,
+        COALESCE(SUM($statusColorSql = 'purple'), 0) AS purple
+    $fromSql $whereSql");
+$statsStmt->execute($params);
+$stats = $statsStmt->fetch();
 
-$total = count($allClaims);
-$greenCnt = $yellowCnt = $redCnt = $purpleCnt = 0;
-foreach ($allClaims as $c) {
-    switch (getClaimStatusColor($c)) {
-        case 'green':  $greenCnt++;  break;
-        case 'yellow': $yellowCnt++; break;
-        case 'red':    $redCnt++;    break;
-        case 'purple': $purpleCnt++; break;
-    }
-}
+$total     = (int)($stats['total']  ?? 0);
+$greenCnt  = (int)($stats['green']  ?? 0);
+$yellowCnt = (int)($stats['yellow'] ?? 0);
+$redCnt    = (int)($stats['red']    ?? 0);
+$purpleCnt = (int)($stats['purple'] ?? 0);
 
-// ===== Пагинация =====
-$page = max(1, (int)($_GET['page'] ?? 1));
+// ===== Пагинация на стороне SQL (LIMIT/OFFSET вместо array_slice) =====
+$page    = max(1, (int)($_GET['page'] ?? 1));
 $perPage = max(10, min(999999, (int)($_GET['per_page'] ?? 50)));
-$offset = ($page - 1) * $perPage;
+$offset  = ($page - 1) * $perPage;
 $totalPages = max(1, (int)ceil($total / $perPage));
-$claimsPage = $total > 0 ? array_slice($allClaims, $offset, $perPage) : [];
+
+$pageStmt = $pdo->prepare("SELECT c.*, o.name as object_name, u.full_name as created_by_name, comp.name as recipient_name
+    $fromSql $whereSql ORDER BY c.created_at DESC LIMIT $perPage OFFSET $offset");
+$pageStmt->execute($params);
+$claimsPage = $pageStmt->fetchAll();
 
 $queryParams = $_GET;
 unset($queryParams['page']);

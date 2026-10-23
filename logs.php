@@ -6,6 +6,12 @@ $user = currentUser();
 $isAdmin = hasRole('admin');
 $isManager = hasRole('manager');
 
+// Журнал доступен только администратору
+if (!$isAdmin) {
+    http_response_code(403);
+    die('❌ Доступ запрещён');
+}
+
 // Гард для GET-параметров: ?action[]=x больше не ломает страницу (500)
 $g = fn(string $key): string => isset($_GET[$key]) && is_string($_GET[$key]) ? $_GET[$key] : '';
 $actionFilter   = $g('action');
@@ -81,15 +87,6 @@ $currentPage = 'logs';
 $showUsersLink = false;
 $isAdmin = $isAdmin;
 $extraHead = '';
-
-ob_start();
-?>
-            <div class="mt-auto">
-                <hr class="sidebar-divider">
-                <a href="logout.php" class="btn btn-outline-danger w-100 btn-sm"><i class="bi bi-box-arrow-right"></i> Выйти</a>
-            </div>
-<?php
-$sidebarContent = ob_get_clean();
 
 require 'templates/header.php';
 ?>

@@ -8,6 +8,12 @@ $csrfToken = getCsrfToken();
 $user = currentUser();
 $isAdmin = ($_SESSION['role'] === 'admin' || $_SESSION['user_id'] === 1);
 
+// Страница доступна только администратору
+if (!$isAdmin) {
+    http_response_code(403);
+    die('❌ Доступ запрещён');
+}
+
 $error = '';
 $message = '';
 
@@ -134,15 +140,6 @@ $extraHead = <<<EXTRAHEAD
     .password-field .toggle-password:hover { color: #000; }
 </style>
 EXTRAHEAD;
-
-ob_start();
-?>
-            <div class="mt-auto">
-                <hr class="sidebar-divider">
-                <a href="logout.php" class="btn btn-outline-danger w-100 btn-sm"><i class="bi bi-box-arrow-right"></i> Выйти</a>
-            </div>
-<?php
-$sidebarContent = ob_get_clean();
 
 require 'templates/header.php';
 ?>

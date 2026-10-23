@@ -9,6 +9,12 @@ $navLinks = [
     'dashboard' => ['Дашборд и графики', 'bi-speedometer2'],
     'objects'   => ['Компании и объекты', 'bi-building'],
 ];
+
+// Разделы, доступные только администратору
+if (hasRole('admin') || ($_SESSION['user_id'] ?? null) === 1) {
+    $navLinks['users'] = ['Пользователи', 'bi-people'];
+    $navLinks['logs']  = ['Журнал действий', 'bi-journal-text'];
+}
 ?>
         <div class="col-md-2 sidebar p-3 d-flex flex-column">
             <div class="text-center mb-4">

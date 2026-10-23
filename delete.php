@@ -51,15 +51,6 @@ $showUsersLink = false;
 $isAdmin = false;
 $extraHead = '';
 
-ob_start();
-?>
-            <div class="mt-auto">
-                <hr class="sidebar-divider">
-                <a href="logout.php" class="btn btn-outline-danger w-100 btn-sm"><i class="bi bi-box-arrow-right"></i> Выйти</a>
-            </div>
-<?php
-$sidebarContent = ob_get_clean();
-
 require 'templates/header.php';
 ?>
             <div class="d-flex justify-content-between align-items-center mb-4">
