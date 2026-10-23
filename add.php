@@ -153,20 +153,36 @@ $isAdmin = false;
 
 $extraHead = <<<'HEAD'
 <style>
+/* Блок загрузки: рамка + подложка, зоны хорошо отделены друг от друга */
+.upload-block {
+    border: 1px solid #d9e2ec;
+    border-radius: 12px;
+    background: #ffffff;
+    padding: 0.9rem 1rem 1rem;
+    height: 100%;
+    box-shadow: 0 1px 3px rgba(16, 24, 40, 0.07);
+}
+.upload-block .form-label {
+    width: 100%;
+    margin-bottom: 0.75rem;
+    padding-bottom: 0.5rem;
+    border-bottom: 1px dashed #d9e2ec;   /* пунктирный разделитель заголовка */
+}
 .dropzone {
-    border: 2px dashed #ccc;
+    border: 2px dashed #9fb0c0;
     border-radius: 10px;
-    padding: 1.5rem 1rem;
+    padding: 1.25rem 1rem;
     text-align: center;
     cursor: pointer;
     transition: all 0.2s ease;
-    background: #f8f9fa;
-    min-height: 80px;
+    background: #f6f9fc;
+    min-height: 96px;
     display: flex;
     align-items: center;
     justify-content: center;
 }
-.dropzone:hover { border-color: #0d6efd; background: #e9ecef; }
+.dropzone .bi-cloud-upload { color: #5b6b7c; }
+.dropzone:hover { border-color: #0d6efd; background: #eef5ff; }
 .dropzone.dragover { border-color: #0d6efd; background: #cfe2ff; border-style: solid; }
 .dropzone.has-file { border-color: #198754; background: #d1e7dd; border-style: solid; }
 .dropzone .dropzone-message { color: #6c757d; }
@@ -262,51 +278,57 @@ require 'templates/header.php';
                             </div>
 
                             <div class="col-md-5">
-                                <label class="form-label fw-semibold">📄 Файл претензии</label>
-                                <div class="dropzone" data-input="claim_file">
-                                    <div class="dropzone-message">
-                                        <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
-                                        <span>Перетащите файл сюда или <strong>нажмите для выбора</strong></span>
+                                <div class="upload-block">
+                                    <label class="form-label fw-semibold">📄 Файл претензии</label>
+                                    <div class="dropzone" data-input="claim_file">
+                                        <div class="dropzone-message">
+                                            <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
+                                            <span>Перетащите файл сюда или <strong>нажмите для выбора</strong></span>
+                                        </div>
+                                        <div class="dropzone-preview">
+                                            <i class="bi bi-file-earmark-check text-success fs-4"></i>
+                                            <span class="dropzone-filename fw-bold ms-2"></span>
+                                            <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove" title="Удалить файл">✕</button>
+                                        </div>
                                     </div>
-                                    <div class="dropzone-preview">
-                                        <i class="bi bi-file-earmark-check text-success fs-4"></i>
-                                        <span class="dropzone-filename fw-bold ms-2"></span>
-                                        <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove" title="Удалить файл">✕</button>
-                                    </div>
+                                    <input type="file" name="claim_file" class="d-none" id="claim_file">
                                 </div>
-                                <input type="file" name="claim_file" class="d-none" id="claim_file">
                             </div>
 
                             <div class="col-md-5">
-                                <label class="form-label fw-semibold">📄 Файл ответа</label>
-                                <div class="dropzone" data-input="response_file">
-                                    <div class="dropzone-message">
-                                        <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
-                                        <span>Перетащите файл сюда или <strong>нажмите для выбора</strong></span>
+                                <div class="upload-block">
+                                    <label class="form-label fw-semibold">📄 Файл ответа</label>
+                                    <div class="dropzone" data-input="response_file">
+                                        <div class="dropzone-message">
+                                            <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
+                                            <span>Перетащите файл сюда или <strong>нажмите для выбора</strong></span>
+                                        </div>
+                                        <div class="dropzone-preview">
+                                            <i class="bi bi-file-earmark-check text-success fs-4"></i>
+                                            <span class="dropzone-filename fw-bold ms-2"></span>
+                                            <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove" title="Удалить файл">✕</button>
+                                        </div>
                                     </div>
-                                    <div class="dropzone-preview">
-                                        <i class="bi bi-file-earmark-check text-success fs-4"></i>
-                                        <span class="dropzone-filename fw-bold ms-2"></span>
-                                        <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove" title="Удалить файл">✕</button>
-                                    </div>
+                                    <input type="file" name="response_file" class="d-none" id="response_file">
                                 </div>
-                                <input type="file" name="response_file" class="d-none" id="response_file">
                             </div>
 
                             <div class="col-md-5">
-                                <label class="form-label fw-semibold">📎 Дополнительные файлы <small class="text-muted">(можно несколько)</small></label>
-                                <div class="dropzone" data-input="additional_files">
-                                    <div class="dropzone-message">
-                                        <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
-                                        <span>Перетащите файлы сюда или <strong>нажмите для выбора</strong></span>
+                                <div class="upload-block">
+                                    <label class="form-label fw-semibold">📎 Дополнительные файлы <small class="text-muted">(можно несколько)</small></label>
+                                    <div class="dropzone" data-input="additional_files">
+                                        <div class="dropzone-message">
+                                            <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
+                                            <span>Перетащите файлы сюда или <strong>нажмите для выбора</strong></span>
+                                        </div>
+                                        <div class="dropzone-preview">
+                                            <i class="bi bi-files text-success fs-4"></i>
+                                            <span class="dropzone-filename fw-bold ms-2"></span>
+                                            <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove" title="Удалить файлы">✕</button>
+                                        </div>
                                     </div>
-                                    <div class="dropzone-preview">
-                                        <i class="bi bi-files text-success fs-4"></i>
-                                        <span class="dropzone-filename fw-bold ms-2"></span>
-                                        <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove" title="Удалить файлы">✕</button>
-                                    </div>
+                                    <input type="file" name="additional_files[]" class="d-none" multiple id="additional_files">
                                 </div>
-                                <input type="file" name="additional_files[]" class="d-none" multiple id="additional_files">
                             </div>
                         </div>
 

@@ -32,3 +32,17 @@
     background: #f5f7fa;
     min-height: 100vh;
 }
+
+/* ===== Статусы сроков претензий =====
+   Классы .badge-green/yellow/red/purple раньше определялись только
+   inline-стилями на index.php — на остальных страницах (view.php и др.)
+   у .badge не было фона, и белый текст Bootstrap терялся на белой карточке.
+   Теперь фон есть везде, а текст всегда чёрный. */
+.badge-green  { background-color: #4caf50; }
+.badge-yellow { background-color: #ff9800; }
+.badge-red    { background-color: #f44336; }
+.badge-purple { background-color: #9c27b0; }
+.badge-green, .badge-yellow, .badge-red, .badge-purple {
+    color: #000 !important;
+    font-weight: 600;
+}
