@@ -276,7 +276,7 @@ require 'templates/header.php';
                                         <td><?= $c['response_date'] ? date('d.m.Y', strtotime($c['response_date'])) : '—' ?></td>
                                         <td><span class="fw-bold"><?= $days ?></span></td>
                                         <td>
-                                            <span class="badge badge-<?= $color ?>" style="color:#000!important"><?= getStatusLabel($color) ?></span>
+                                            <span class="badge badge-<?= $color ?>"><?= getStatusLabel($color) ?></span>
                                             <br><small class="text-muted"><?= htmlspecialchars($c['current_status'] ?? '—') ?></small>
                                         </td>
                                         <td>
