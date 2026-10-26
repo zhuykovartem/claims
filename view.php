@@ -20,6 +20,8 @@ if (!$c) {
 
 $color = getClaimStatusColor($c);
 $days = getDaysPassed($c);
+$deadline = getResponseDeadline($c['received_date']);   // дата «Срок ответа до»
+$answered = !empty($c['response_date']);                // ответ дан — счётчик остановлен
 $additional_files = $c['additional_files'] ? json_decode($c['additional_files'], true) : [];
 
 // ===== Переменные для шаблона =====
@@ -190,14 +192,31 @@ require 'templates/header.php';
                 <h4 class="badge badge-<?= $color ?> fs-5 px-3 py-2">
                     <?= getStatusLabel($color) ?>
                 </h4>
-                <p class="mt-3 mb-0">
-                    Дней с даты поступления:
-                    <span class="fs-2 fw-bold <?=
-                        $color == 'green' ? 'text-success' :
-                        ($color == 'yellow' ? 'text-warning' :
-                        ($color == 'red' ? 'text-danger' : 'text-purple'))
-                    ?>"><?= $days ?></span>
-                </p>
+                <?php if ($answered): ?>
+                    <p class="mt-3 mb-1">
+                        Ответ дан через:
+                        <span class="fs-2 fw-bold text-success"><?= $days ?></span> дн.
+                    </p>
+                    <p class="mb-0 small text-muted">
+                        <i class="bi bi-snow2"></i> Счётчик остановлен — дата ответа указана
+                    </p>
+                <?php else: ?>
+                    <p class="mt-3 mb-0">
+                        Дней с даты поступления:
+                        <span class="fs-2 fw-bold <?=
+                            $color == 'green' ? 'text-success' :
+                            ($color == 'yellow' ? 'text-warning' :
+                            ($color == 'red' ? 'text-danger' : 'text-purple'))
+                        ?>"><?= $days ?></span>
+                    </p>
+                <?php endif; ?>
+                <?php if ($deadline): ?>
+                    <p class="mt-3 mb-0 small <?= !$answered && $days >= CLAIM_RESPONSE_DEADLINE_DAYS ? 'text-danger fw-bold' : 'text-muted' ?>">
+                        <i class="bi bi-calendar-event"></i>
+                        Срок ответа (<?= CLAIM_RESPONSE_DEADLINE_DAYS ?> дн.):
+                        до <strong><?= date('d.m.Y', strtotime($deadline)) ?></strong><?= !$answered && $days >= CLAIM_RESPONSE_DEADLINE_DAYS ? ' — истёк' : '' ?>
+                    </p>
+                <?php endif; ?>
                 <?php if ($c['response_file']): ?>
                     <div class="mt-3">
                         <span class="badge bg-success fs-6">✅ Ответ прикреплён</span>

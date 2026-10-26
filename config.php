@@ -193,6 +193,61 @@ function getStatusLabel($color) {
     return $labels[$color] ?? 'Неизвестно';
 }
 
+// ===== Step 9: справочник статусов и срок ответа =====
+// Типовые статусы для подсказок в формах (datalist). Ввод остаётся
+// СВОБОДНЫМ — datalist лишь предлагает варианты, ничего не запрещая.
+// Список можно править здесь, в одном месте.
+const CLAIM_STATUS_OPTIONS = [
+    'Новая',
+    'На рассмотрении',
+    'Направлен ответ',
+    'В суде',
+    'Закрыта',
+];
+
+// Срок ответа на претензию (дней с даты поступления) — для строки «Срок ответа до»
+const CLAIM_RESPONSE_DEADLINE_DAYS = 30;
+
+/**
+ * Варианты для datalist статусов: типовые (CLAIM_STATUS_OPTIONS) +
+ * реально используемые в базе (топ-15 по частоте).
+ * Ошибка запроса не прерывает страницу — вернутся только типовые.
+ */
+function getStatusOptions(PDO $pdo): array {
+    $options = CLAIM_STATUS_OPTIONS;
+    try {
+        $rows = $pdo->query("SELECT current_status, COUNT(*) AS cnt
+            FROM claims
+            WHERE current_status IS NOT NULL AND current_status <> ''
+            GROUP BY current_status
+            ORDER BY cnt DESC, current_status
+            LIMIT 15")->fetchAll();
+        foreach ($rows as $r) {
+            if (!in_array($r['current_status'], $options, true)) {
+                $options[] = $r['current_status'];
+            }
+        }
+    } catch (Throwable $e) {
+        // БД недоступна — подсказываем только типовые
+    }
+    return $options;
+}
+
+/**
+ * Дата, до которой должен быть дан ответ (дата поступления + N дней),
+ * или null, если дата поступления не указана/некорректна.
+ */
+function getResponseDeadline(?string $receivedDate): ?string {
+    if (empty($receivedDate)) return null;
+    try {
+        $dt = new DateTime($receivedDate);
+        $dt->modify('+' . CLAIM_RESPONSE_DEADLINE_DAYS . ' days');
+        return $dt->format('Y-m-d');
+    } catch (Exception $e) {
+        return null;
+    }
+}
+
 // ===== Логирование =====
 function logAction($action, $entity_type = null, $entity_id = null, $details = null) {
     global $pdo;

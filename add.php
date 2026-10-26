@@ -255,7 +255,13 @@ require 'templates/header.php';
 
                             <div class="col-md-3">
                                 <label class="form-label fw-semibold">Текущий статус</label>
-                                <input type="text" name="current_status" class="form-control" value="Новая" placeholder="Статус">
+                                <input type="text" name="current_status" class="form-control" value="Новая" placeholder="Статус" list="statusOptions">
+                                <datalist id="statusOptions">
+                                    <?php foreach (getStatusOptions($pdo) as $statusOpt): ?>
+                                        <option value="<?= htmlspecialchars($statusOpt) ?>"></option>
+                                    <?php endforeach; ?>
+                                </datalist>
+                                <small class="text-muted">Выберите из списка или введите свой</small>
                             </div>
 
                             <div class="col-12">

@@ -236,7 +236,7 @@ require 'templates/header.php';
                                     <th>Предмет претензии</th>
                                     <th>Дата пост.</th>
                                     <th>Дата ответа</th>
-                                    <th>Дней</th>
+                                    <th title="Дни с даты поступления; для закрытых претензий счётчик остановлен на дате ответа">Дней</th>
                                     <th>Статус срока</th>
                                     <th>Файлы</th>
                                     <th style="width:90px;">Действия</th>
@@ -272,7 +272,13 @@ require 'templates/header.php';
                                         </td>
                                         <td><?= $c['received_date'] ? date('d.m.Y', strtotime($c['received_date'])) : '—' ?></td>
                                         <td><?= $c['response_date'] ? date('d.m.Y', strtotime($c['response_date'])) : '—' ?></td>
-                                        <td><span class="fw-bold"><?= $days ?></span></td>
+                                        <td>
+                                            <?php if ($c['response_date']): ?>
+                                                <span class="fw-bold text-muted" title="Ответ дан <?= date('d.m.Y', strtotime($c['response_date'])) ?> — счётчик остановлен"><?= $days ?></span>
+                                            <?php else: ?>
+                                                <span class="fw-bold" title="Дней с даты поступления"><?= $days ?></span>
+                                            <?php endif; ?>
+                                        </td>
                                         <td>
                                             <span class="badge badge-<?= $color ?>"><?= getStatusLabel($color) ?></span>
                                             <br><small class="text-muted"><?= htmlspecialchars($c['current_status'] ?? '—') ?></small>
@@ -358,6 +364,7 @@ require 'templates/header.php';
                         <span class="legend-dot" style="background:#ff9800;"></span> 10–19 дн.
                         <span class="legend-dot" style="background:#f44336;"></span> 20–29 дн.
                         <span class="legend-dot" style="background:#9c27b0;"></span> 30+ дн.
+                        <span class="legend-dot" style="background:#adb5bd;"></span> серым — ответ дан (счётчик остановлен)
                     </div>
                     <div>Всего: <strong><?= $total ?></strong> записей</div>
                 </div>
