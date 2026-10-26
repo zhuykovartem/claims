@@ -253,6 +253,29 @@ function buildColumnIndex(array $headers, array $fieldMap) {
     return $colIdx;
 }
 
+// Русские названия колонок — для человекочитаемых сообщений об ошибках INSERT
+function impColumnLabel(string $col): string {
+    static $labels = [
+        'object_id'          => 'Объект',
+        'applicant'          => 'Заявитель',
+        'apartment_number'   => '№ квартиры',
+        'direction'          => 'Направление',
+        'received_from'      => 'От кого получено',
+        'received_date'      => 'Дата поступления',
+        'subject'            => 'Предмет претензии',
+        'current_status'     => 'Текущий статус',
+        'additional_notes'   => 'Дополнительно',
+        'response_direction' => 'Направление ответа',
+        'response_date'      => 'Дата ответа',
+        'recipient_id'       => 'Получатель (компания)',
+        'claim_file'         => 'Файл претензии',
+        'response_file'      => 'Файл ответа',
+        'additional_files'   => 'Доп. файлы',
+        'created_by'         => 'Автор',
+    ];
+    return $labels[$col] ?? $col;
+}
+
 // Вставка одной претензии
 function impInsertClaim(PDO $pdo, array $d) {
     static $stmt = null;
@@ -261,13 +284,24 @@ function impInsertClaim(PDO $pdo, array $d) {
             (object_id, applicant, apartment_number, direction, received_from, received_date, subject, current_status, additional_notes, response_direction, response_date, recipient_id, claim_file, response_file, additional_files, created_by)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)");
     }
-    $stmt->execute([
-        $d['object_id'], $d['applicant'], $d['apartment_number'], $d['direction'], $d['received_from'],
-        $d['received_date'], $d['subject'], $d['current_status'], $d['additional_notes'] ?? null, $d['response_direction'], $d['response_date'],
-        $d['recipient_id'], $d['claim_file'], $d['response_file'],
-        !empty($d['additional_files']) ? json_encode(array_values($d['additional_files']), JSON_UNESCAPED_UNICODE) : null,
-        $_SESSION['user_id'],
-    ]);
+    try {
+        $stmt->execute([
+            $d['object_id'], $d['applicant'], $d['apartment_number'], $d['direction'], $d['received_from'],
+            $d['received_date'], $d['subject'], $d['current_status'], $d['additional_notes'] ?? null, $d['response_direction'], $d['response_date'],
+            $d['recipient_id'], $d['claim_file'], $d['response_file'],
+            !empty($d['additional_files']) ? json_encode(array_values($d['additional_files']), JSON_UNESCAPED_UNICODE) : null,
+            $_SESSION['user_id'],
+        ]);
+    } catch (PDOException $e) {
+        // 1406 Data too long for column 'X' — превращаем SQL-ошибку в понятную строку отчёта
+        if (preg_match("/for column '([^']+)'/", $e->getMessage(), $m)) {
+            throw new RuntimeException(
+                'значение поля «' . impColumnLabel($m[1]) . '» не влезает в колонку БД (ошибка 1406). '
+                . 'Укоротите значение в файле или расширьте колонку (см. миграцию hotfix)'
+            );
+        }
+        throw $e; // остальные ошибки БД — наверх, импорт прерывается целиком
+    }
 }
 
 // Импорт строк CSV. $fileMap — файлы из папки files/ архива (null для простого CSV).
@@ -402,24 +436,40 @@ function impImportCsvRows(PDO $pdo, array $rows, array $fieldMap, $uploadDir, $f
         }
 
         $status = impCell($row, $colIdx, 'current_status');
+        if ($status === '') $status = 'Импортировано';
+        // Превентивная проверка: current_status = VARCHAR(255). Строку с более
+        // длинным статусом пропускаем с понятным сообщением вместо 1406.
+        if (mb_strlen($status) > 255) {
+            $st['skipped']++;
+            $st['rowErrors'][] = "📄 Запись {$rowNum}: статус длиннее 255 символов (" . mb_strlen($status)
+                . ") — запись пропущена. Сократите статус, подробности можно перенести в колонку «Дополнительно»";
+            continue;
+        }
 
-        impInsertClaim($pdo, [
-            'object_id'          => resolveOrCreateObject($pdo, impCell($row, $colIdx, 'object') !== '' ? impCell($row, $colIdx, 'object') : $defaultObject),
-            'applicant'          => $applicant,
-            'apartment_number'   => impCell($row, $colIdx, 'apartment_number') ?: null,
-            'direction'          => normalizeDirection($directionRaw),
-            'received_from'      => impCell($row, $colIdx, 'received_from') ?: null,
-            'received_date'      => normalizeDate($receivedDateRaw) ?: date('Y-m-d'),
-            'subject'            => $subject,
-            'current_status'     => $status !== '' ? $status : 'Импортировано',
-            'additional_notes'   => impCell($row, $colIdx, 'additional_notes') ?: null,
-            'response_direction' => impCell($row, $colIdx, 'response_direction') ?: null,
-            'response_date'      => normalizeDate(impCell($row, $colIdx, 'response_date')) ?: null,
-            'recipient_id'       => $recipientId,
-            'claim_file'         => $claimFileName,
-            'response_file'      => $responseFileName,
-            'additional_files'   => $additionalFileNames,
-        ]);
+        try {
+            impInsertClaim($pdo, [
+                'object_id'          => resolveOrCreateObject($pdo, impCell($row, $colIdx, 'object') !== '' ? impCell($row, $colIdx, 'object') : $defaultObject),
+                'applicant'          => $applicant,
+                'apartment_number'   => impCell($row, $colIdx, 'apartment_number') ?: null,
+                'direction'          => normalizeDirection($directionRaw),
+                'received_from'      => impCell($row, $colIdx, 'received_from') ?: null,
+                'received_date'      => normalizeDate($receivedDateRaw) ?: date('Y-m-d'),
+                'subject'            => $subject,
+                'current_status'     => $status,
+                'additional_notes'   => impCell($row, $colIdx, 'additional_notes') ?: null,
+                'response_direction' => impCell($row, $colIdx, 'response_direction') ?: null,
+                'response_date'      => normalizeDate(impCell($row, $colIdx, 'response_date')) ?: null,
+                'recipient_id'       => $recipientId,
+                'claim_file'         => $claimFileName,
+                'response_file'      => $responseFileName,
+                'additional_files'   => $additionalFileNames,
+            ]);
+        } catch (RuntimeException $e) {
+            // Переполнение любой другой колонки — пропускаем строку, импорт продолжается
+            $st['skipped']++;
+            $st['rowErrors'][] = "📄 Запись {$rowNum}: {$e->getMessage()} — запись пропущена";
+            continue;
+        }
         $st['imported']++;
 
         foreach ($validationErrors as $ve) {
@@ -552,23 +602,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['import_file']) && $_
                             }
                         }
 
-                        impInsertClaim($pdo, [
-                            'object_id'          => resolveOrCreateObject($pdo, $meta['object'] ?? ''),
-                            'applicant'          => $applicant,
-                            'apartment_number'   => ($meta['apartment_number'] ?? '') ?: null,
-                            'direction'          => normalizeDirection($meta['direction'] ?? ''),
-                            'received_from'      => ($meta['received_from'] ?? '') ?: null,
-                            'received_date'      => normalizeDate($meta['received_date'] ?? '') ?: date('Y-m-d'),
-                            'subject'            => $subject,
-                            'current_status'     => ($meta['current_status'] ?? '') ?: 'Импортировано',
-                            'additional_notes'   => ($meta['additional_notes'] ?? '') ?: null,
-                            'response_direction' => ($meta['response_direction'] ?? '') ?: null,
-                            'response_date'      => normalizeDate($meta['response_date'] ?? '') ?: null,
-                            'recipient_id'       => resolveRecipient($pdo, $meta['recipient'] ?? $meta['recipient_id'] ?? $meta['company'] ?? ''),
-                            'claim_file'         => $claimFileName,
-                            'response_file'      => $responseFileName,
-                            'additional_files'   => $additionalFileNames,
-                        ]);
+                        $statusFinal = ($meta['current_status'] ?? '') ?: 'Импортировано';
+                        if (mb_strlen($statusFinal) > 255) {
+                            $st['skipped']++;
+                            $st['rowErrors'][] = "📁 Папка «{$dirName}»: статус длиннее 255 символов (" . mb_strlen($statusFinal)
+                                . ") — запись пропущена. Сократите статус, подробности можно перенести в «Дополнительно»";
+                            continue;
+                        }
+
+                        try {
+                            impInsertClaim($pdo, [
+                                'object_id'          => resolveOrCreateObject($pdo, $meta['object'] ?? ''),
+                                'applicant'          => $applicant,
+                                'apartment_number'   => ($meta['apartment_number'] ?? '') ?: null,
+                                'direction'          => normalizeDirection($meta['direction'] ?? ''),
+                                'received_from'      => ($meta['received_from'] ?? '') ?: null,
+                                'received_date'      => normalizeDate($meta['received_date'] ?? '') ?: date('Y-m-d'),
+                                'subject'            => $subject,
+                                'current_status'     => $statusFinal,
+                                'additional_notes'   => ($meta['additional_notes'] ?? '') ?: null,
+                                'response_direction' => ($meta['response_direction'] ?? '') ?: null,
+                                'response_date'      => normalizeDate($meta['response_date'] ?? '') ?: null,
+                                'recipient_id'       => resolveRecipient($pdo, $meta['recipient'] ?? $meta['recipient_id'] ?? $meta['company'] ?? ''),
+                                'claim_file'         => $claimFileName,
+                                'response_file'      => $responseFileName,
+                                'additional_files'   => $additionalFileNames,
+                            ]);
+                        } catch (RuntimeException $e) {
+                            $st['skipped']++;
+                            $st['rowErrors'][] = "📁 Папка «{$dirName}»: {$e->getMessage()} — запись пропущена";
+                            continue;
+                        }
                         $st['imported']++;
 
                         foreach ($validationErrors as $ve) {
