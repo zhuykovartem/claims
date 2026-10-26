@@ -95,7 +95,7 @@ $csrfToken = getCsrfToken();
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>Вход — Реестр претензий</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link href="assets/vendor/bootstrap/bootstrap.min.css" rel="stylesheet">
     <style>
         body {
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
@@ -191,6 +191,6 @@ $csrfToken = getCsrfToken();
         </div>
     </div>
 </div>
-<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+<script src="assets/vendor/bootstrap/bootstrap.bundle.min.js"></script>
 </body>
 </html>

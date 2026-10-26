@@ -45,7 +45,7 @@ $currentPage = 'dashboard';
 $showUsersLink = true;
 $isAdmin = false;
 $extraHead = <<<HEAD
-<script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.1/dist/chart.umd.min.js"></script>
+<script src="assets/vendor/chartjs/chart.umd.min.js"></script>
 <style>
 .stat-card { border-radius: 12px; transition: transform 0.15s; }
 .stat-card:hover { transform: translateY(-3px); box-shadow: 0 8px 25px rgba(0,0,0,0.1); }

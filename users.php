@@ -35,6 +35,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['create_user']) && $is
         $error = 'Пароль обязателен';
     } elseif (mb_strlen($password) < 8) {
         $error = 'Пароль должен быть минимум 8 символов';
+    } elseif (!preg_match('/\p{L}/u', $password) || !preg_match('/\d/u', $password)) {
+        $error = 'Пароль должен содержать хотя бы одну букву и одну цифру';
     } else {
         $stmt = $pdo->prepare("SELECT id FROM users WHERE username = ?");
         $stmt->execute([$username]);
@@ -67,6 +69,8 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['change_password'])) {
         $error = 'Введите новый пароль';
     } elseif (mb_strlen($newPassword) < 8) {
         $error = 'Пароль должен быть минимум 8 символов';
+    } elseif (!preg_match('/\p{L}/u', $newPassword) || !preg_match('/\d/u', $newPassword)) {
+        $error = 'Пароль должен содержать хотя бы одну букву и одну цифру';
     } elseif ($isSelf && !password_verify($oldPassword, (string)($user['password_hash'] ?? ''))) {
         // При смене пароля себе требуем текущий пароль:
         // защита от угона сессии (злоумышленник не знает старый пароль)
@@ -173,7 +177,7 @@ require 'templates/header.php';
                                 <div class="mb-3 password-field">
                                     <label class="form-label fw-semibold">Пароль <span class="text-danger">*</span></label>
                                     <input type="password" name="password" class="form-control" required minlength="8" autocomplete="new-password" id="newPass">
-                                    <small class="text-muted">Минимум 8 символов</small>
+                                    <small class="text-muted">Минимум 8 символов: буквы и цифры</small>
                                     <button type="button" class="toggle-password" onclick="togglePass('newPass', this)">
                                         <i class="bi bi-eye"></i>
                                     </button>
@@ -234,7 +238,7 @@ require 'templates/header.php';
                                 <div class="mb-3 password-field">
                                     <label class="form-label fw-semibold">Новый пароль <span class="text-danger">*</span></label>
                                     <input type="password" name="new_password" class="form-control" required minlength="8" autocomplete="new-password" id="changePass">
-                                    <small class="text-muted">Минимум 8 символов</small>
+                                    <small class="text-muted">Минимум 8 символов: буквы и цифры</small>
                                     <button type="button" class="toggle-password" onclick="togglePass('changePass', this)">
                                         <i class="bi bi-eye"></i>
                                     </button>
