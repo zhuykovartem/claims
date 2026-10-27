@@ -72,6 +72,58 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_object'])) {
     }
 }
 
+// ===== Редактирование объекта =====
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_object'])) {
+    $obj_id  = (int)$_POST['edit_object'];
+    $obj_name    = trim($_POST['edit_object_name'] ?? '');
+    $obj_address = trim($_POST['edit_object_address'] ?? '');
+
+    if ($obj_id <= 0) {
+        $error = 'Объект не выбран';
+    } elseif ($obj_name === '') {
+        $error = 'Название объекта обязательно';
+    } else {
+        $stmt = $pdo->prepare("SELECT id FROM objects WHERE name=? AND id != ?");
+        $stmt->execute([$obj_name, $obj_id]);
+        if ($stmt->fetch()) {
+            $error = 'Объект с таким названием уже существует';
+        } else {
+            $stmt = $pdo->prepare("UPDATE objects SET name = ?, address = ? WHERE id = ?");
+            $stmt->execute([$obj_name, $obj_address ?: null, $obj_id]);
+            logAction('update', 'object', $obj_id, 'Изменён объект: ' . $obj_name);
+            $message = '✅ Объект «' . htmlspecialchars($obj_name) . '» обновлён';
+        }
+    }
+}
+
+// ===== Удаление объекта =====
+// ВАЖНО: в БД на claims.object_id висит ON DELETE CASCADE — удаление объекта
+// с претензиями молча снесло бы все его претензии. Поэтому проверяем счётчик
+// в коде и отказываем в удалении.
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_object'])) {
+    $obj_id = (int)$_POST['delete_object'];
+    $stmt = $pdo->prepare("SELECT name FROM objects WHERE id=?");
+    $stmt->execute([$obj_id]);
+    $obj_name = $stmt->fetchColumn();
+
+    if ($obj_name === false) {
+        $error = 'Объект не найден';
+    } else {
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM claims WHERE object_id=?");
+        $stmt->execute([$obj_id]);
+        $claimsCount = (int)$stmt->fetchColumn();
+
+        if ($claimsCount > 0) {
+            $error = "❌ Нельзя удалить объект «" . htmlspecialchars($obj_name) . "»: с ним связано $claimsCount претензий. Сначала перенесите или удалите их.";
+        } else {
+            $pdo->prepare("DELETE FROM object_companies WHERE object_id=?")->execute([$obj_id]);
+            $pdo->prepare("DELETE FROM objects WHERE id=?")->execute([$obj_id]);
+            logAction('delete', 'object', $obj_id, 'Удалён объект: ' . $obj_name);
+            $message = '🗑️ Объект «' . htmlspecialchars($obj_name) . '» удалён';
+        }
+    }
+}
+
 // ===== Привязка компании к объекту =====
 if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['link_company'])) {
     $company_id = (int)($_POST['link_company_id'] ?? 0);
@@ -107,7 +159,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST["unlink_obj"], $_POST[
 $companies = $pdo->query("SELECT c.*,
     (SELECT COUNT(*) FROM claims cl WHERE cl.recipient_id = c.id) as claims_count
     FROM companies c ORDER BY c.name")->fetchAll();
-$objects = $pdo->query("SELECT * FROM objects ORDER BY name")->fetchAll();
+$objects = $pdo->query("SELECT o.*,
+    (SELECT COUNT(*) FROM claims cl WHERE cl.object_id = o.id) as claims_count
+    FROM objects o ORDER BY o.name")->fetchAll();
 $roleLabels = [
     'developer'            => '🏗️ Застройщик',
     'technical_customer'   => '🔧 Тех. заказчик',
@@ -307,6 +361,7 @@ require 'templates/header.php';
                                 <th>Название</th>
                                 <th>Адрес</th>
                                 <th>Привязанные компании</th>
+                                <th style="width:110px;">Действия</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -328,14 +383,71 @@ require 'templates/header.php';
                                             <?php endforeach; ?>
                                         <?php endif; ?>
                                     </td>
+                                    <td>
+                                        <div class="btn-group btn-group-sm">
+                                            <button type="button" class="btn btn-outline-primary" title="Редактировать"
+                                                    data-bs-toggle="modal" data-bs-target="#editObjectModal<?= $o['id'] ?>">
+                                                <i class="bi bi-pencil"></i>
+                                            </button>
+                                            <?php if ((int)$o['claims_count'] > 0): ?>
+                                                <button type="button" class="btn btn-outline-danger" disabled
+                                                        title="Нельзя удалить: с объектом связано <?= (int)$o['claims_count'] ?> претензий">
+                                                    <i class="bi bi-trash"></i>
+                                                </button>
+                                            <?php else: ?>
+                                                <form method="POST" class="d-inline" onsubmit="return confirm('Удалить объект «<?= htmlspecialchars($o['name'], ENT_QUOTES) ?>»? Привязки компаний будут убраны.')">
+                                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                                    <input type="hidden" name="delete_object" value="<?= $o['id'] ?>">
+                                                    <button type="submit" class="btn btn-outline-danger" title="Удалить объект">
+                                                        <i class="bi bi-trash"></i>
+                                                    </button>
+                                                </form>
+                                            <?php endif; ?>
+                                        </div>
+                                    </td>
                                 </tr>
                             <?php endforeach; ?>
                             <?php if (count($objects) === 0): ?>
-                                <tr><td colspan="3" class="text-center py-4 text-muted">Объектов пока нет. Добавьте первый!</td></tr>
+                                <tr><td colspan="4" class="text-center py-4 text-muted">Объектов пока нет. Добавьте первый!</td></tr>
                             <?php endif; ?>
                         </tbody>
                     </table>
                 </div>
             </div>
+
+            <!-- Модальные окна редактирования объектов -->
+            <?php foreach ($objects as $o): ?>
+            <div class="modal fade" id="editObjectModal<?= $o['id'] ?>" tabindex="-1" aria-hidden="true">
+                <div class="modal-dialog">
+                    <div class="modal-content">
+                        <form method="POST">
+                            <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                            <input type="hidden" name="edit_object" value="<?= $o['id'] ?>">
+                            <div class="modal-header">
+                                <h5 class="modal-title"><i class="bi bi-pencil"></i> Редактировать объект</h5>
+                                <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                            </div>
+                            <div class="modal-body">
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Название объекта <span class="text-danger">*</span></label>
+                                    <input type="text" name="edit_object_name" class="form-control" maxlength="255" value="<?= htmlspecialchars($o['name']) ?>" required>
+                                </div>
+                                <div class="mb-3">
+                                    <label class="form-label fw-semibold">Адрес</label>
+                                    <input type="text" name="edit_object_address" class="form-control" maxlength="500" value="<?= htmlspecialchars($o['address'] ?? '') ?>" placeholder="г. Москва, ул. Строителей, д. 1">
+                                </div>
+                                <?php if ((int)$o['claims_count'] > 0): ?>
+                                    <small class="text-muted"><i class="bi bi-info-circle"></i> При переименовании объекта все существующие претензии сохранят привязку автоматически</small>
+                                <?php endif; ?>
+                            </div>
+                            <div class="modal-footer">
+                                <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+                                <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Сохранить</button>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+            </div>
+            <?php endforeach; ?>
 <?php
 require 'templates/footer.php';

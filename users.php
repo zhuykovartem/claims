@@ -122,6 +122,43 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['delete_user']) && $is
     }
 }
 
+// 5. Редактирование пользователя: ФИО и роль (только админ)
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['edit_user']) && $isAdmin) {
+    $targetId = (int)$_POST['edit_user'];
+    $fullName = trim($_POST['edit_full_name'] ?? '');
+    $newRole  = in_array($_POST['edit_role'] ?? '', ['admin', 'manager', 'viewer'], true) ? $_POST['edit_role'] : null;
+
+    $stmt = $pdo->prepare("SELECT * FROM users WHERE id = ?");
+    $stmt->execute([$targetId]);
+    $target = $stmt->fetch();
+
+    if (!$target) {
+        $error = 'Пользователь не найден';
+    } elseif ($newRole === null) {
+        $error = 'Некорректная роль';
+    } elseif ($targetId === 1 && $newRole !== 'admin') {
+        $error = '❌ Роль главного администратора изменить нельзя';
+    } elseif ($targetId === (int)$_SESSION['user_id'] && $newRole !== $target['role']) {
+        $error = '❌ Нельзя изменить собственную роль';
+    } else {
+        // Не даём оставить систему без активных администраторов
+        $stmt = $pdo->prepare("SELECT COUNT(*) FROM users WHERE role = 'admin' AND is_active = 1 AND id != ?");
+        $stmt->execute([$targetId]);
+        $otherAdmins = (int)$stmt->fetchColumn();
+        if ($target['role'] === 'admin' && $target['is_active'] && $newRole !== 'admin' && $otherAdmins === 0) {
+            $error = '❌ Это последний активный администратор — сначала назначьте другого';
+        } else {
+            $stmt = $pdo->prepare("UPDATE users SET full_name = ?, role = ? WHERE id = ?");
+            $stmt->execute([$fullName ?: null, $newRole, $targetId]);
+            if ($targetId === (int)$_SESSION['user_id']) {
+                $_SESSION['full_name'] = $fullName; // сразу отражаем в журнале и шапке
+            }
+            logAction('update', 'user', $targetId, 'Изменён пользователь: ' . $target['username'] . ' (роль: ' . $newRole . ')');
+            $message = '✅ Пользователь «' . htmlspecialchars($target['username']) . '» обновлён';
+        }
+    }
+}
+
 // Получаем список пользователей
 $users = $pdo->query("SELECT u.*, (SELECT COUNT(*) FROM claims WHERE created_by = u.id) as claims_count FROM users u ORDER BY u.id")->fetchAll();
 
@@ -266,7 +303,7 @@ require 'templates/header.php';
                                         <th>Претензий</th>
                                         <th>Создан</th>
                                         <?php if ($isAdmin): ?>
-                                        <th style="width:90px;">Действия</th>
+                                        <th style="width:130px;">Действия</th>
                                         <?php endif; ?>
                                     </tr>
                                 </thead>
@@ -310,6 +347,10 @@ require 'templates/header.php';
                                             <?php if ($isAdmin): ?>
                                             <td>
                                                 <div class="btn-group btn-group-sm">
+                                                    <button type="button" class="btn btn-outline-primary" title="Редактировать (ФИО, роль)"
+                                                            data-bs-toggle="modal" data-bs-target="#editUserModal<?= $u['id'] ?>">
+                                                        <i class="bi bi-pencil"></i>
+                                                    </button>
                                                     <a href="#" class="btn btn-outline-warning" title="Сменить пароль"
                                                        onclick="document.querySelector('select[name=user_id]').value='<?= $u['id'] ?>'; document.querySelector('input[name=new_password]').focus(); return false;">
                                                         <i class="bi bi-key"></i>
@@ -349,11 +390,64 @@ require 'templates/header.php';
                         </div>
                     </div>
 
+                    <!-- Модальные окна редактирования пользователей -->
+                    <?php if ($isAdmin): foreach ($users as $u): ?>
+                    <div class="modal fade" id="editUserModal<?= $u['id'] ?>" tabindex="-1" aria-hidden="true">
+                        <div class="modal-dialog">
+                            <div class="modal-content">
+                                <form method="POST">
+                                    <input type="hidden" name="csrf_token" value="<?= htmlspecialchars($csrfToken) ?>">
+                                    <input type="hidden" name="edit_user" value="<?= $u['id'] ?>">
+                                    <?php if ($u['id'] === 1 || $u['id'] === $_SESSION['user_id']): ?>
+                                        <!-- select роли скрыт/заблокирован — передаём текущую роль явно -->
+                                        <input type="hidden" name="edit_role" value="<?= htmlspecialchars($u['role']) ?>">
+                                    <?php endif; ?>
+                                    <div class="modal-header">
+                                        <h5 class="modal-title"><i class="bi bi-pencil"></i> Редактировать: <?= htmlspecialchars($u['username']) ?></h5>
+                                        <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Закрыть"></button>
+                                    </div>
+                                    <div class="modal-body">
+                                        <div class="mb-3">
+                                            <label class="form-label fw-semibold">Логин</label>
+                                            <input type="text" class="form-control" value="<?= htmlspecialchars($u['username']) ?>" disabled>
+                                            <small class="text-muted">Логин изменить нельзя — на него завязаны вход и журнал</small>
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label fw-semibold">ФИО</label>
+                                            <input type="text" name="edit_full_name" class="form-control" maxlength="255" value="<?= htmlspecialchars($u['full_name'] ?? '') ?>" placeholder="Иванов Иван Иванович">
+                                        </div>
+                                        <div class="mb-3">
+                                            <label class="form-label fw-semibold">Роль</label>
+                                            <select name="edit_role" class="form-select" <?= ($u['id'] === 1 || $u['id'] === $_SESSION['user_id']) ? 'disabled' : '' ?>>
+                                                <option value="viewer" <?= $u['role'] === 'viewer' ? 'selected' : '' ?>>👁️ Просмотр</option>
+                                                <option value="manager" <?= $u['role'] === 'manager' ? 'selected' : '' ?>>📋 Менеджер</option>
+                                                <option value="admin" <?= $u['role'] === 'admin' ? 'selected' : '' ?>>⚙️ Администратор</option>
+                                            </select>
+                                            <?php if ($u['id'] === 1): ?>
+                                                <small class="text-muted">Роль главного администратора не изменяется</small>
+                                            <?php elseif ($u['id'] === $_SESSION['user_id']): ?>
+                                                <small class="text-muted">Собственную роль изменить нельзя</small>
+                                            <?php endif; ?>
+                                        </div>
+                                    </div>
+                                    <div class="modal-footer">
+                                        <button type="button" class="btn btn-outline-secondary" data-bs-dismiss="modal">Отмена</button>
+                                        <button type="submit" class="btn btn-primary"><i class="bi bi-check-lg"></i> Сохранить</button>
+                                    </div>
+                                </form>
+                            </div>
+                        </div>
+                    </div>
+                    <?php endforeach; endif; ?>
+
                     <div class="card shadow-sm border-0 mt-3">
                         <div class="card-body p-3">
                             <h6 class="fw-bold"><i class="bi bi-info-circle text-info"></i> Правила</h6>
                             <ul class="small text-muted mb-0">
                                 <li><strong>Главный администратор (id=1)</strong> — не может быть удалён или деактивирован</li>
+                                <li><strong>ФИО и роль</strong> меняются кнопкой ✏️ в строке пользователя; логин изменить нельзя (на него завязаны вход и журнал)</li>
+                                <li><strong>Собственную роль</strong> и роль главного администратора изменить нельзя; система не останется без активного админа</li>
+                                <li>Новая роль применяется после повторного входа пользователя в систему</li>
                                 <li><strong>Администратор</strong> — может создавать, редактировать и удалять любых пользователей</li>
                                 <li><strong>Менеджер (manager)</strong> — может работать с претензиями, сменить свой пароль</li>
                                 <li><strong>Просмотр (viewer)</strong> — только просмотр данных, может сменить свой пароль</li>
