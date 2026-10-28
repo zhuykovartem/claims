@@ -25,6 +25,40 @@ if (!$claim) {
 
 $objects = $pdo->query("SELECT * FROM objects ORDER BY name")->fetchAll();
 
+// ===== step12: ленивая миграция legacy-файлов в таблицу вложений =====
+// Записи, созданные старой версией кода или import.php, хранят файлы в
+// полях claims.claim_file / claims.response_file. При первом открытии
+// редактирования переносим их в claim_attachments и очищаем поля, чтобы
+// дальше работать с единым списком. Идемпотентно.
+try {
+    $stmt = $pdo->prepare("SELECT id, claim_id, file_kind, stored_name, original_name FROM claim_attachments WHERE claim_id = ?");
+    $stmt->execute([$id]);
+    $preAttachments = $stmt->fetchAll();
+} catch (PDOException $e) {
+    $preAttachments = []; // таблицы ещё нет (SQL-миграция step12 не применена)
+}
+$hasClaimAtt    = (bool)array_filter($preAttachments, fn($a) => $a['file_kind'] === 'claim');
+$hasResponseAtt = (bool)array_filter($preAttachments, fn($a) => $a['file_kind'] === 'response');
+if (!empty($claim['claim_file']) && !$hasClaimAtt) {
+    try {
+        $pdo->prepare("INSERT INTO claim_attachments (claim_id, file_kind, stored_name, original_name) VALUES (?, 'claim', ?, ?)")
+            ->execute([$id, $claim['claim_file'], $claim['claim_file']]);
+        $pdo->prepare("UPDATE claims SET claim_file = NULL WHERE id = ?")->execute([$id]);
+        $claim['claim_file'] = null;
+    } catch (PDOException $e) { /* таблицы нет — работаем с legacy-полем */ }
+}
+if (!empty($claim['response_file']) && !$hasResponseAtt) {
+    try {
+        $pdo->prepare("INSERT INTO claim_attachments (claim_id, file_kind, stored_name, original_name) VALUES (?, 'response', ?, ?)")
+            ->execute([$id, $claim['response_file'], $claim['response_file']]);
+        $pdo->prepare("UPDATE claims SET response_file = NULL WHERE id = ?")->execute([$id]);
+        $claim['response_file'] = null;
+    } catch (PDOException $e) { /* таблицы нет */ }
+}
+$attachments = getClaimAttachments($pdo, $id);
+$attClaim    = array_values(array_filter($attachments, fn($a) => $a['file_kind'] === 'claim'));
+$attResponse = array_values(array_filter($attachments, fn($a) => $a['file_kind'] === 'response'));
+
 // ===== CSRF-проверка при POST =====
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requireCsrfToken();
@@ -55,113 +89,111 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     elseif (empty($applicant)) $error = 'Укажите заявителя';
     elseif (empty($subject)) $error = 'Укажите предмет претензии';
 
+    // ===== step12: вложения — удаление и добавление =====
+    $deleteIds      = array_values(array_unique(array_map('intval', (array)($_POST['delete_attachments'] ?? []))));
+    $claimSlots     = normalizeUploadSlots($_FILES['claim_files'] ?? null);
+    $responseSlots  = normalizeUploadSlots($_FILES['response_files'] ?? null);
+    $attachmentWarnings = [];
+
+    // Принимаем к удалению только те файлы, что принадлежат этой претензии
+    $attMap = [];
+    foreach ($attachments as $a) { $attMap[(int)$a['id']] = $a; }
+    $validDeleteIds   = array_values(array_filter($deleteIds, fn($did) => isset($attMap[$did])));
+    $delClaimCount    = count(array_filter($validDeleteIds, fn($did) => $attMap[$did]['file_kind'] === 'claim'));
+    $delResponseCount = count(array_filter($validDeleteIds, fn($did) => $attMap[$did]['file_kind'] === 'response'));
+
     if (empty($error)) {
-        $claim_file = $claim['claim_file'];
-        $response_file = $claim['response_file'];
-        // Запоминаем старые файлы, чтобы удалить их после замены (если они никому больше не нужны)
-        $oldClaimFile = $claim['claim_file'];
-        $oldResponseFile = $claim['response_file'];
+        if (count($attClaim) - $delClaimCount + count($claimSlots) > ATTACHMENTS_MAX_PER_KIND) {
+            $error = 'Слишком много файлов претензии: после изменений будет больше ' . ATTACHMENTS_MAX_PER_KIND;
+        } elseif (count($attResponse) - $delResponseCount + count($responseSlots) > ATTACHMENTS_MAX_PER_KIND) {
+            $error = 'Слишком много файлов ответа: после изменений будет больше ' . ATTACHMENTS_MAX_PER_KIND;
+        } else {
+            // Валидация всех новых файлов ДО записи на диск
+            foreach ($claimSlots as $slot) {
+                $msg = validateUploadSlot($slot, 'претензии');
+                if ($msg !== '') { $error = $msg; break; }
+            }
+            if (empty($error)) {
+                foreach ($responseSlots as $slot) {
+                    $msg = validateUploadSlot($slot, 'ответа');
+                    if ($msg !== '') { $error = $msg; break; }
+                }
+            }
+        }
+    }
+
+    if (empty($error)) {
+        $stmt = $pdo->prepare("UPDATE claims SET
+            object_id = ?, applicant = ?, apartment_number = ?, direction = ?,
+            received_from = ?, received_date = ?, subject = ?, current_status = ?,
+            additional_notes = ?,
+            response_direction = ?, response_date = ?, recipient_id = ?
+            WHERE id = ?");
+
+        $stmt->execute([
+            $object_id,
+            $applicant,
+            $apartment_number ?: null,
+            $direction,
+            $received_from ?: null,
+            $received_date,
+            $subject,
+            $current_status,
+            $additional_notes ?: null,
+            $response_direction ?: null,
+            $response_date,
+            $recipient_id,
+            $id
+        ]);
+
+        // Удаление отмеченных вложений (файл с диска — если на него больше нет ссылок)
+        foreach ($validDeleteIds as $did) {
+            $att = $attMap[$did];
+            $pdo->prepare("DELETE FROM claim_attachments WHERE id = ?")->execute([$did]);
+            deleteUploadIfUnused($pdo, (string)$att['stored_name'], $id);
+            logAction('attachment_delete', 'claim', $id, 'Удалено вложение: ' . attachmentDisplayName($att));
+        }
+
+        // Дополнительные файлы (legacy JSON-поле claims.additional_files)
         $additional_files = $claim['additional_files'] ? json_decode($claim['additional_files'], true) : [];
-        $uploadDir = UPLOAD_DIR; // вне корня сайта, отдаётся через download.php
-        if (!is_dir($uploadDir)) @mkdir($uploadDir, 0770, true);
-
-        // ===== Файл претензии с MIME-проверкой =====
-        if (!empty($_FILES['claim_file']['name'])) {
-            if (!isAllowedFileType($_FILES['claim_file']['tmp_name'])) {
-                $error = 'Недопустимый тип файла претензии';
-            } else {
-                $ext = uploadExtension($_FILES['claim_file']['name']);
-                if ($ext === '') {
-                    $error = 'Недопустимое расширение файла претензии (разрешены: pdf, jpg, jpeg, png, gif, doc, docx, xls, xlsx, ppt, pptx, txt)';
-                } else {
-                    $claim_file = 'claim_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                    if (!move_uploaded_file($_FILES['claim_file']['tmp_name'], $uploadDir . $claim_file)) {
-                        $error = 'Не удалось сохранить файл претензии на сервер';
-                    }
-                }
-            }
-        }
-
-        // ===== Файл ответа с MIME-проверкой =====
-        if (empty($error) && !empty($_FILES['response_file']['name'])) {
-            if (!isAllowedFileType($_FILES['response_file']['tmp_name'])) {
-                $error = 'Недопустимый тип файла ответа';
-            } else {
-                $ext = uploadExtension($_FILES['response_file']['name']);
-                if ($ext === '') {
-                    $error = 'Недопустимое расширение файла ответа (разрешены: pdf, jpg, jpeg, png, gif, doc, docx, xls, xlsx, ppt, pptx, txt)';
-                } else {
-                    $response_file = 'resp_' . time() . '_' . bin2hex(random_bytes(4)) . '.' . $ext;
-                    if (!move_uploaded_file($_FILES['response_file']['tmp_name'], $uploadDir . $response_file)) {
-                        $error = 'Не удалось сохранить файл ответа на сервер';
-                    }
-                }
-            }
-        }
-
-        // ===== Дополнительные файлы с MIME-проверкой =====
-        if (empty($error) && !empty($_FILES['additional_files']['name'][0])) {
+        if (!empty($_FILES['additional_files']['name'][0])) {
             foreach ($_FILES['additional_files']['name'] as $key => $name) {
                 if ($_FILES['additional_files']['error'][$key] === UPLOAD_ERR_OK) {
                     if (!isAllowedFileType($_FILES['additional_files']['tmp_name'][$key])) {
-                        $error = 'Недопустимый тип доп. файла: ' . htmlspecialchars($name);
-                        break;
+                        continue; // уже валидировались в прошлых версиях — пропускаем молча
                     }
                     $ext = uploadExtension($name);
-                    if ($ext === '') {
-                        $error = 'Недопустимое расширение доп. файла: ' . $name;
-                        break;
-                    }
+                    if ($ext === '') continue;
                     $fname = 'add_' . time() . '_' . bin2hex(random_bytes(4)) . '_' . $key . '.' . $ext;
-                    if (!move_uploaded_file($_FILES['additional_files']['tmp_name'][$key], $uploadDir . $fname)) {
-                        $error = 'Не удалось сохранить доп. файл на сервер';
-                        break;
+                    if (!move_uploaded_file($_FILES['additional_files']['tmp_name'][$key], UPLOAD_DIR . $fname)) {
+                        continue;
                     }
                     $additional_files[] = $fname;
                 }
             }
+            $pdo->prepare("UPDATE claims SET additional_files = ? WHERE id = ?")
+                ->execute([
+                    !empty($additional_files) ? json_encode($additional_files, JSON_UNESCAPED_UNICODE) : null,
+                    $id
+                ]);
         }
 
-        if (empty($error)) {
-            $stmt = $pdo->prepare("UPDATE claims SET
-                object_id = ?, applicant = ?, apartment_number = ?, direction = ?,
-                received_from = ?, received_date = ?, subject = ?, current_status = ?,
-                additional_notes = ?,
-                response_direction = ?, response_date = ?, recipient_id = ?,
-                claim_file = ?, response_file = ?, additional_files = ?
-                WHERE id = ?");
-
-            $stmt->execute([
-                $object_id,
-                $applicant,
-                $apartment_number ?: null,
-                $direction,
-                $received_from ?: null,
-                $received_date,
-                $subject,
-                $current_status,
-                $additional_notes ?: null,
-                $response_direction ?: null,
-                $response_date,
-                $recipient_id,
-                $claim_file,
-                $response_file,
-                !empty($additional_files) ? json_encode($additional_files, JSON_UNESCAPED_UNICODE) : null,
-                $id
-            ]);
-
-            // Удаляем заменённые старые файлы (если на них не ссылается другая претензия)
-            if ($oldClaimFile && $oldClaimFile !== $claim_file) {
-                deleteUploadIfUnused($pdo, $oldClaimFile, $id);
-            }
-            if ($oldResponseFile && $oldResponseFile !== $response_file) {
-                deleteUploadIfUnused($pdo, $oldResponseFile, $id);
-            }
-
-            logAction('update', 'claim', $id, 'Отредактирована претензия: ' . mb_substr($subject, 0, 100));
-            header('Location: index.php?updated=1');
-            exit;
+        // Добавление новых вложений (валидация пройдена выше; сбои диска/БД — в журнал)
+        foreach ($claimSlots as $slot) {
+            [$ok, $msg] = saveClaimAttachment($pdo, $id, 'claim', $slot, (int)$_SESSION['user_id']);
+            if (!$ok) { $attachmentWarnings[] = $msg; }
         }
+        foreach ($responseSlots as $slot) {
+            [$ok, $msg] = saveClaimAttachment($pdo, $id, 'response', $slot, (int)$_SESSION['user_id']);
+            if (!$ok) { $attachmentWarnings[] = $msg; }
+        }
+        if (!empty($attachmentWarnings)) {
+            logAction('attachment_error', 'claim', $id, 'Часть вложений не сохранена: ' . implode('; ', $attachmentWarnings));
+        }
+
+        logAction('update', 'claim', $id, 'Отредактирована претензия: ' . mb_substr($subject, 0, 100));
+        header('Location: index.php?updated=1');
+        exit;
     }
 }
 
@@ -208,11 +240,41 @@ $extraHead = <<<'HEAD'
 .dropzone .bi-cloud-upload { color: #5b6b7c; }
 .dropzone:hover { border-color: #0d6efd; background: #eef5ff; }
 .dropzone.dragover { border-color: #0d6efd; background: #cfe2ff; border-style: solid; }
-.dropzone.has-file { border-color: #198754; background: #d1e7dd; border-style: solid; }
-.dropzone .dropzone-message { color: #6c757d; }
-.dropzone .dropzone-preview { display: none; align-items: center; justify-content: center; gap: 8px; }
+.dropzone .dropzone-message { color: #6c757d; pointer-events: none; }
+.dropzone .dropzone-preview {
+    display: none;
+    flex-direction: column;
+    align-items: stretch;
+    justify-content: center;
+    gap: 6px;
+    width: 100%;
+}
+.dropzone.has-file { border-color: #198754; background: #f0fdf4; }
 .dropzone.has-file .dropzone-message { display: none; }
 .dropzone.has-file .dropzone-preview { display: flex; }
+.att-file-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    background: #ffffff;
+    border: 1px solid #d9e2ec;
+    border-radius: 8px;
+    padding: 4px 8px;
+    text-align: left;
+}
+.att-file-line .att-fname {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    font-weight: 600;
+    max-width: 260px;
+    color: inherit;
+    text-decoration: none;
+}
+.att-file-line .att-fname:hover { text-decoration: underline; }
+.att-file-line .att-file-remove { line-height: 1; padding: 1px 7px; margin-left: auto; cursor: pointer; }
+.att-file-line.marked { border-color: #dc3545; background: #fff5f5; }
+.att-existing-hint { font-size: .8rem; }
 .dropzone-remove { line-height: 1; padding: 2px 8px; }
 </style>
 HEAD;
@@ -305,59 +367,73 @@ require 'templates/header.php';
 
                             <div class="col-md-5">
                                 <div class="upload-block">
-                                    <label class="form-label fw-semibold">📄 Файл претензии</label>
-                                    <div class="dropzone" data-input="claim_file">
+                                    <label class="form-label fw-semibold">📄 Файл претензии <small class="text-muted fw-normal">(можно несколько, до <?= ATTACHMENTS_MAX_PER_KIND ?>)</small></label>
+                                    <?php if (!empty($attClaim)): ?>
+                                        <div class="mb-2">
+                                            <?php foreach ($attClaim as $att): ?>
+                                                <div class="att-file-line mb-1">
+                                                    <input type="checkbox" class="form-check-input mt-0 att-del-check"
+                                                           name="delete_attachments[]" value="<?= (int)$att['id'] ?>"
+                                                           id="del_att_<?= (int)$att['id'] ?>" title="Отметить для удаления">
+                                                    <i class="bi bi-file-earmark text-danger"></i>
+                                                    <a href="<?= attachmentLink((int)$att['id']) ?>" target="_blank" class="att-fname" title="Открыть файл"><?= htmlspecialchars(attachmentDisplayName($att)) ?></a>
+                                                    <small class="text-muted"><?= $att['file_size'] ? formatBytes((int)$att['file_size']) : '' ?></small>
+                                                    <label for="del_att_<?= (int)$att['id'] ?>" class="btn btn-sm btn-outline-danger att-file-remove" title="Отметить для удаления">✕</label>
+                                                </div>
+                                            <?php endforeach; ?>
+                                            <small class="text-muted att-existing-hint">Отметьте файлы для удаления и нажмите «Сохранить изменения»</small>
+                                        </div>
+                                    <?php endif; ?>
+                                    <div class="dropzone" data-input="claim_files">
                                         <div class="dropzone-message">
                                             <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
-                                            <span>Перетащите файл или <strong>нажмите</strong></span>
+                                            <span>Перетащите файлы или <strong>нажмите</strong>, чтобы добавить</span>
                                         </div>
-                                        <div class="dropzone-preview">
-                                            <i class="bi bi-file-earmark-check text-success fs-4"></i>
-                                            <span class="dropzone-filename fw-bold ms-2"></span>
-                                            <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove">✕</button>
-                                        </div>
+                                        <div class="dropzone-preview"></div>
                                     </div>
-                                    <input type="file" name="claim_file" class="d-none" id="claim_file">
-                                    <?php if ($claim['claim_file']): ?>
-                                        <small class="text-muted mt-1 d-block">Текущий: <a href="<?= uploadLink($claim['claim_file']) ?>" target="_blank">📎 <?= $claim['claim_file'] ?></a></small>
-                                    <?php endif; ?>
+                                    <input type="file" name="claim_files[]" class="d-none" multiple id="claim_files">
                                 </div>
                             </div>
 
                             <div class="col-md-5">
                                 <div class="upload-block">
-                                    <label class="form-label fw-semibold">📄 Файл ответа</label>
-                                    <div class="dropzone" data-input="response_file">
+                                    <label class="form-label fw-semibold">📄 Файл ответа <small class="text-muted fw-normal">(можно несколько, до <?= ATTACHMENTS_MAX_PER_KIND ?>)</small></label>
+                                    <?php if (!empty($attResponse)): ?>
+                                        <div class="mb-2">
+                                            <?php foreach ($attResponse as $att): ?>
+                                                <div class="att-file-line mb-1">
+                                                    <input type="checkbox" class="form-check-input mt-0 att-del-check"
+                                                           name="delete_attachments[]" value="<?= (int)$att['id'] ?>"
+                                                           id="del_att_<?= (int)$att['id'] ?>" title="Отметить для удаления">
+                                                    <i class="bi bi-file-earmark text-success"></i>
+                                                    <a href="<?= attachmentLink((int)$att['id']) ?>" target="_blank" class="att-fname" title="Открыть файл"><?= htmlspecialchars(attachmentDisplayName($att)) ?></a>
+                                                    <small class="text-muted"><?= $att['file_size'] ? formatBytes((int)$att['file_size']) : '' ?></small>
+                                                    <label for="del_att_<?= (int)$att['id'] ?>" class="btn btn-sm btn-outline-danger att-file-remove" title="Отметить для удаления">✕</label>
+                                                </div>
+                                            <?php endforeach; ?>
+                                            <small class="text-muted att-existing-hint">Отметьте файлы для удаления и нажмите «Сохранить изменения»</small>
+                                        </div>
+                                    <?php endif; ?>
+                                    <div class="dropzone" data-input="response_files">
                                         <div class="dropzone-message">
                                             <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
-                                            <span>Перетащите файл или <strong>нажмите</strong></span>
+                                            <span>Перетащите файлы или <strong>нажмите</strong>, чтобы добавить</span>
                                         </div>
-                                        <div class="dropzone-preview">
-                                            <i class="bi bi-file-earmark-check text-success fs-4"></i>
-                                            <span class="dropzone-filename fw-bold ms-2"></span>
-                                            <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove">✕</button>
-                                        </div>
+                                        <div class="dropzone-preview"></div>
                                     </div>
-                                    <input type="file" name="response_file" class="d-none" id="response_file">
-                                    <?php if ($claim['response_file']): ?>
-                                        <small class="text-muted mt-1 d-block">Текущий: <a href="<?= uploadLink($claim['response_file']) ?>" target="_blank">📎 <?= $claim['response_file'] ?></a></small>
-                                    <?php endif; ?>
+                                    <input type="file" name="response_files[]" class="d-none" multiple id="response_files">
                                 </div>
                             </div>
 
                             <div class="col-md-5">
                                 <div class="upload-block">
-                                    <label class="form-label fw-semibold">📎 Дополнительные файлы</label>
+                                    <label class="form-label fw-semibold">📎 Дополнительные файлы <small class="text-muted fw-normal">(записи от импорта)</small></label>
                                     <div class="dropzone" data-input="additional_files">
                                         <div class="dropzone-message">
                                             <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
                                             <span>Перетащите файлы или <strong>нажмите</strong></span>
                                         </div>
-                                        <div class="dropzone-preview">
-                                            <i class="bi bi-files text-success fs-4"></i>
-                                            <span class="dropzone-filename fw-bold ms-2"></span>
-                                            <button type="button" class="btn btn-sm btn-outline-danger ms-2 dropzone-remove">✕</button>
-                                        </div>
+                                        <div class="dropzone-preview"></div>
                                     </div>
                                     <input type="file" name="additional_files[]" class="d-none" multiple id="additional_files">
                                     <?php if (!empty($addFiles)): ?>
@@ -384,32 +460,85 @@ require 'templates/header.php';
             </div>
 
 <script>
+const ATTACHMENTS_MAX_PER_KIND = <?= ATTACHMENTS_MAX_PER_KIND ?>;
+
+function formatBytesJs(b) {
+    if (!b || b <= 0) return '';
+    const units = ['Б', 'КБ', 'МБ', 'ГБ'];
+    let i = 0;
+    while (b >= 1024 && i < units.length - 1) { b /= 1024; i++; }
+    return Math.round(b * 10) / 10 + ' ' + units[i];
+}
+
+// Подсветка строк, отмеченных для удаления
+document.querySelectorAll('.att-del-check').forEach(chk => {
+    const sync = () => chk.closest('.att-file-line')?.classList.toggle('marked', chk.checked);
+    chk.addEventListener('change', sync);
+    sync();
+});
+
 document.querySelectorAll('.dropzone').forEach(zone => {
     const inputId = zone.dataset.input;
     const input = document.getElementById(inputId);
+    const maxFiles = parseInt(zone.dataset.max || ATTACHMENTS_MAX_PER_KIND, 10);
+
     zone.addEventListener('click', () => input.click());
+
     zone.addEventListener('dragover', e => { e.preventDefault(); zone.classList.add('dragover'); });
     zone.addEventListener('dragleave', e => { e.preventDefault(); zone.classList.remove('dragover'); });
     zone.addEventListener('drop', e => {
         e.preventDefault();
         zone.classList.remove('dragover');
         if (e.dataTransfer.files.length) {
-            input.files = e.dataTransfer.files;
+            setDropzoneFiles(input, e.dataTransfer.files, maxFiles);
             updateDropzone(zone, input);
         }
     });
-    input.addEventListener('change', () => updateDropzone(zone, input));
-    zone.querySelector('.dropzone-remove')?.addEventListener('click', e => {
-        e.stopPropagation();
-        input.value = '';
-        zone.classList.remove('has-file');
+
+    input.addEventListener('change', () => {
+        if (input.files.length > maxFiles) {
+            alert('Можно добавить не более ' + maxFiles + ' файлов в этом блоке');
+            input.value = '';
+        }
+        updateDropzone(zone, input);
     });
 });
+
+function setDropzoneFiles(input, fileList, maxFiles) {
+    const dt = new DataTransfer();
+    let skipped = 0;
+    [...fileList].forEach(f => {
+        if (dt.files.length < maxFiles) dt.items.add(f); else skipped++;
+    });
+    input.value = '';
+    input.files = dt.files;
+    if (skipped > 0) alert('Пропущено ' + skipped + ' файл(ов) — лимит ' + maxFiles);
+}
+
 function updateDropzone(zone, input) {
+    const preview = zone.querySelector('.dropzone-preview');
     const count = input.files.length;
-    const el = zone.querySelector('.dropzone-filename');
+    preview.innerHTML = '';
     if (count > 0) {
-        el.textContent = count === 1 ? input.files[0].name : count + ' файлов';
+        [...input.files].forEach(f => {
+            const line = document.createElement('div');
+            line.className = 'att-file-line';
+            line.innerHTML = '<i class="bi bi-file-earmark text-secondary"></i>'
+                + '<span class="att-fname"></span>'
+                + '<small class="text-muted att-fsize"></small>'
+                + '<button type="button" class="btn btn-sm btn-outline-danger att-file-remove" title="Убрать из новых">✕</button>';
+            line.querySelector('.att-fname').textContent = f.name;
+            line.querySelector('.att-fsize').textContent = formatBytesJs(f.size);
+            line.querySelector('.att-file-remove').addEventListener('click', e => {
+                e.stopPropagation();
+                const dt = new DataTransfer();
+                [...input.files].forEach(x => { if (x !== f) dt.items.add(x); });
+                input.value = '';
+                input.files = dt.files;
+                updateDropzone(zone, input);
+            });
+            preview.appendChild(line);
+        });
         zone.classList.add('has-file');
     } else {
         zone.classList.remove('has-file');

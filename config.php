@@ -358,6 +358,12 @@ function getCompanyObjectRole($pdo, $objectId, $companyId) {
 // Whitelist расширений для загрузки через формы add.php/edit.php (зеркалит isAllowedFileType)
 const ALLOWED_UPLOAD_EXTENSIONS = ['pdf','jpg','jpeg','png','gif','doc','docx','xls','xlsx','ppt','pptx','txt'];
 
+// ===== Мультизагрузка вложений (step12) =====
+// Максимум файлов в каждом блоке («Файл претензии», «Файл ответа»):
+// существующие + новые суммарно. Размер каждого файла ограничивает PHP
+// (upload_max_filesize/post_max_size в php.ini).
+const ATTACHMENTS_MAX_PER_KIND = 10;
+
 // Расширенный список для импорта из архива (файлы хранятся вне webroot и
 // отдаются через download.php, поэтому исполняемыми быть не могут в принципе)
 const ALLOWED_IMPORT_EXTENSIONS = [
@@ -376,7 +382,8 @@ function uploadLink($fileName): string {
     return 'download.php?file=' . rawurlencode(basename((string)$fileName));
 }
 
-// Используется ли файл другими претензиями (кроме исключаемой)
+// Используется ли файл другими претензиями (кроме исключаемой).
+// Проверяются и legacy-поля claims, и таблица вложений claim_attachments (step12).
 function claimFileInUse(PDO $pdo, string $fileName, int $excludeClaimId = 0): bool {
     if ($fileName === '') return false;
     $fileName = basename($fileName);
@@ -390,7 +397,148 @@ function claimFileInUse(PDO $pdo, string $fileName, int $excludeClaimId = 0): bo
     }
     $stmt = $pdo->prepare($sql);
     $stmt->execute($params);
-    return (int)$stmt->fetchColumn() > 0;
+    if ((int)$stmt->fetchColumn() > 0) return true;
+
+    // Таблица вложений: файл занят, если есть строка у другой претензии
+    try {
+        $sql = "SELECT COUNT(*) FROM claim_attachments WHERE stored_name = ?";
+        $params = [$fileName];
+        if ($excludeClaimId > 0) {
+            $sql .= " AND claim_id != ?";
+            $params[] = $excludeClaimId;
+        }
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return (int)$stmt->fetchColumn() > 0;
+    } catch (PDOException $e) {
+        return false; // миграция step12 ещё не применена
+    }
+}
+
+// ===== Вложения претензии: таблица claim_attachments (step12) =====
+
+// Все вложения претензии; $kind = 'claim' | 'response' | null (оба типа)
+function getClaimAttachments(PDO $pdo, int $claimId, ?string $kind = null): array {
+    $sql = "SELECT id, claim_id, file_kind, stored_name, original_name, file_size, uploaded_by, uploaded_at
+            FROM claim_attachments WHERE claim_id = ?";
+    $params = [$claimId];
+    if ($kind !== null && in_array($kind, ['claim', 'response'], true)) {
+        $sql .= " AND file_kind = ?";
+        $params[] = $kind;
+    }
+    $sql .= " ORDER BY id";
+    try {
+        $stmt = $pdo->prepare($sql);
+        $stmt->execute($params);
+        return $stmt->fetchAll();
+    } catch (PDOException $e) {
+        return []; // миграция step12 ещё не применена
+    }
+}
+
+// Имя вложения для показа пользователю: оригинальное, а для старых
+// записей (до step12) — техническое имя на диске
+function attachmentDisplayName(array $att): string {
+    $orig = trim((string)($att['original_name'] ?? ''));
+    return $orig !== '' ? $orig : basename((string)($att['stored_name'] ?? ''));
+}
+
+// Ссылка на вложение через защищённый шлюз (оригинальное имя download.php берёт из БД)
+function attachmentLink(int $attachmentId): string {
+    return 'download.php?att=' . $attachmentId;
+}
+
+// Приводит поле $_FILES с multiple-выбором (name="x[]") к списку слотов
+// без пустых элементов (пользователь мог не заполнить все строки выбора).
+// Возвращает массив: ['name'=>string, 'tmp_name'=>string, 'error'=>int, 'size'=>int]
+function normalizeUploadSlots($filesField): array {
+    $slots = [];
+    if (!is_array($filesField) || !isset($filesField['name']) || !is_array($filesField['name'])) {
+        return $slots;
+    }
+    foreach ($filesField['name'] as $i => $n) {
+        $err = (int)($filesField['error'][$i] ?? UPLOAD_ERR_NO_FILE);
+        if ($err === UPLOAD_ERR_NO_FILE) continue; // пустой слот выбора
+        $slots[] = [
+            'name'     => (string)$n,
+            'tmp_name' => (string)($filesField['tmp_name'][$i] ?? ''),
+            'error'    => $err,
+            'size'     => (int)($filesField['size'][$i] ?? 0),
+        ];
+    }
+    return $slots;
+}
+
+// Человекочитаемое описание кода ошибки PHP-загрузки
+function uploadErrorMessage(int $code, string $name): string {
+    switch ($code) {
+        case UPLOAD_ERR_INI_SIZE:
+        case UPLOAD_ERR_FORM_SIZE:
+            return 'файл «' . $name . '» превышает допустимый размер (upload_max_filesize на сервере)';
+        case UPLOAD_ERR_PARTIAL:
+            return 'файл «' . $name . '» загружен частично — повторите попытку';
+        case UPLOAD_ERR_NO_TMP_DIR:
+        case UPLOAD_ERR_CANT_WRITE:
+            return 'нет места для записи файла «' . $name . '» на сервере';
+        case UPLOAD_ERR_NO_FILE:
+            return 'файл «' . $name . '» не выбран';
+        default:
+            return 'ошибка загрузки файла «' . $name . '» (код ' . $code . ')';
+    }
+}
+
+// Валидация одного слота (до сохранения на диск): код ошибки PHP,
+// MIME-тип и расширение. Возвращает '' или текст ошибки.
+function validateUploadSlot(array $slot, string $kindLabel): string {
+    $name = (string)($slot['name'] ?? '');
+    if (($slot['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
+        return uploadErrorMessage((int)$slot['error'], $name);
+    }
+    $tmp = (string)($slot['tmp_name'] ?? '');
+    if ($tmp === '' || !is_uploaded_file($tmp)) {
+        return 'файл «' . $name . '» не получен сервером';
+    }
+    if (!isAllowedFileType($tmp)) {
+        return 'недопустимый тип файла ' . $kindLabel . ': ' . $name;
+    }
+    if (uploadExtension($name) === '') {
+        return 'недопустимое расширение файла ' . $kindLabel . ': ' . $name
+             . ' (разрешены: ' . implode(', ', ALLOWED_UPLOAD_EXTENSIONS) . ')';
+    }
+    return '';
+}
+
+// Сохранение валидированного файла на диск + регистрация в claim_attachments.
+// Возвращает [bool ok, string error, int|null attachmentId].
+function saveClaimAttachment(PDO $pdo, int $claimId, string $kind, array $slot, int $userId): array {
+    $kindLabel = $kind === 'response' ? 'ответа' : 'претензии';
+    $name = (string)($slot['name'] ?? '');
+    $ext  = uploadExtension($name);
+    $prefix = $kind === 'response' ? 'resp_' : 'claim_';
+    // time() одинаковый для файлов одной загрузки — вторая случайная группа
+    // защищает от коллизий при мультизагрузке
+    $stored = $prefix . time() . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
+    if (!@move_uploaded_file((string)($slot['tmp_name'] ?? ''), UPLOAD_DIR . $stored)) {
+        return [false, 'не удалось сохранить файл ' . $kindLabel . ' «' . $name . '» на сервер', null];
+    }
+    try {
+        $stmt = $pdo->prepare("INSERT INTO claim_attachments
+            (claim_id, file_kind, stored_name, original_name, file_size, uploaded_by)
+            VALUES (?, ?, ?, ?, ?, ?)");
+        $stmt->execute([
+            $claimId,
+            $kind,
+            $stored,
+            mb_substr($name, 0, 255),
+            ((int)($slot['size'] ?? 0)) > 0 ? (int)$slot['size'] : null,
+            $userId > 0 ? $userId : null,
+        ]);
+    } catch (PDOException $e) {
+        @unlink(UPLOAD_DIR . $stored);
+        return [false, 'не удалось зарегистрировать файл «' . $name . '» в базе '
+             . '(проверьте, что SQL-миграция step12 применена)', null];
+    }
+    return [true, '', (int)$pdo->lastInsertId()];
 }
 
 // Удалить файл с диска, если на него больше не ссылается ни одна претензия

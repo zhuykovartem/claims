@@ -9,14 +9,47 @@
 require 'config.php';
 requireAuth();
 
-// ===== Валидация имени файла =====
-$fileName = $_GET['file'] ?? '';
-if (!is_string($fileName) || $fileName === '') {
-    http_response_code(400);
-    die('Файл не указан');
+// ===== Режим 1: вложение из таблицы claim_attachments (?att=ID, step12) =====
+// Имя файла на диске и оригинальное имя пользователя берутся из БД.
+$attId = 0;
+if (isset($_GET['att'])) {
+    $attId = (int)$_GET['att'];
+    if ($attId <= 0) {
+        http_response_code(400);
+        die('Неверный идентификатор вложения');
+    }
+    try {
+        $stmt = $pdo->prepare("SELECT stored_name, original_name FROM claim_attachments WHERE id = ?");
+        $stmt->execute([$attId]);
+        $att = $stmt->fetch();
+    } catch (PDOException $e) {
+        $att = false; // миграция step12 не применена
+    }
+    if (!$att) {
+        http_response_code(404);
+        die('Вложение не найдено');
+    }
+    $fileName = basename((string)$att['stored_name']);
+    $downloadName = trim((string)$att['original_name']);
+    if ($downloadName === '') {
+        $downloadName = $fileName; // старые вложения: оригинальное имя не сохранялось
+    }
+} else {
+// ===== Режим 2: прямое имя файла (?file=...) — legacy-совместимость =====
+    $fileName = $_GET['file'] ?? '';
+    if (!is_string($fileName) || $fileName === '') {
+        http_response_code(400);
+        die('Файл не указан');
+    }
+    $fileName = basename($fileName); // отрезаем любые пути
+    if ($fileName === '' || str_contains($fileName, '..') || str_starts_with($fileName, '.')) {
+        http_response_code(400);
+        die('Недопустимое имя файла');
+    }
+    $downloadName = $fileName;
 }
 
-$fileName = basename($fileName); // отрезаем любые пути
+// ===== Валидация результирующего имени на диске =====
 if ($fileName === '' || str_contains($fileName, '..') || str_starts_with($fileName, '.')) {
     http_response_code(400);
     die('Недопустимое имя файла');
@@ -59,13 +92,16 @@ $mime = $mimeMap[$ext] ?? 'application/octet-stream';
 // всё остальное — принудительное скачивание.
 $inline = in_array($ext, ['pdf', 'jpg', 'jpeg', 'png', 'gif', 'txt'], true);
 
-$asciiName = preg_replace('/[^A-Za-z0-9._\-]/', '_', $fileName);
+$asciiName = preg_replace('/[^A-Za-z0-9._\-]/', '_', $downloadName);
+if ($asciiName === '' || $asciiName === false) {
+    $asciiName = 'file';
+}
 
 header('Content-Type: ' . $mime);
 header('X-Content-Type-Options: nosniff');
 header('Content-Disposition: ' . ($inline ? 'inline' : 'attachment')
     . '; filename="' . $asciiName . '"'
-    . "; filename*=UTF-8''" . rawurlencode($fileName));
+    . "; filename*=UTF-8''" . rawurlencode($downloadName));
 header('Content-Length: ' . filesize($path));
 header('Cache-Control: private, max-age=0');
 

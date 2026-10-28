@@ -365,23 +365,33 @@ function impImportCsvRows(PDO $pdo, array $rows, array $fieldMap, $uploadDir, $f
 
         // В колонках файлов часто пишут обычный текст («Решено не отвечать…»).
         // Файлом считаем только то, что похоже на имя файла или лежит в архиве.
+        // step12: в колонке может быть список файлов через «;» (экспорт) —
+        // первый идёт в файл претензии/ответа, остальные — в доп. файлы.
         $claimFileName = null;
         $responseFileName = null;
+        $additionalFileNames = [];
         foreach (['claim_file' => [$cf, 'Текст претензии'], 'response_file' => [$rf, 'Ответ']] as $key => [$val, $colName]) {
             if ($val === '') continue;
-            $fn = basename(str_replace('\\', '/', $val));
-            if (impLooksLikeFile($fn, $fileMap)) {
-                if ($key === 'claim_file') $claimFileName = $fn; else $responseFileName = $fn;
-                if (!isset($fileMap[$fn]) && !file_exists($uploadDir . $fn)) {
-                    $st['filesMissing']++;
-                    $st['fileWarnings'][] = "📄 Запись {$rowNum}: файл «{$fn}» (колонка «{$colName}») не найден";
+            $first = true;
+            foreach (splitAdditionalFiles($val) as $part) {
+                $fn = basename(str_replace('\\', '/', $part));
+                if (impLooksLikeFile($fn, $fileMap)) {
+                    if ($first) {
+                        if ($key === 'claim_file') $claimFileName = $fn; else $responseFileName = $fn;
+                    } elseif (!in_array($fn, $additionalFileNames, true)) {
+                        $additionalFileNames[] = $fn;
+                    }
+                    if (!isset($fileMap[$fn]) && !file_exists($uploadDir . $fn)) {
+                        $st['filesMissing']++;
+                        $st['fileWarnings'][] = "📄 Запись {$rowNum}: файл «{$fn}» (колонка «{$colName}») не найден";
+                    }
+                } elseif ($first) {
+                    $validationErrors[] = "в колонке «{$colName}» текст, а не файл — не перенесён: «" . impShort($part) . "»";
                 }
-            } else {
-                $validationErrors[] = "в колонке «{$colName}» текст, а не файл — не перенесён: «" . impShort($val) . "»";
+                $first = false;
             }
         }
 
-        $additionalFileNames = [];
         if ($af !== '') {
             if (!empty($fileMap)) {
                 foreach (array_keys($fileMap) as $known) {
@@ -577,14 +587,29 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_FILES['import_file']) && $_
                         $responseFileName = null;
                         $additionalFileNames = [];
 
+                        // step12: значение может быть списком — JSON-массив из экспорта
+                        // (в INI «;» — комментарий, поэтому списки пишутся JSON) или одно имя.
+                        // Первый файл — в файл претензии/ответа, остальные — в доп. файлы.
                         foreach (['claim_file' => 'файл претензии', 'response_file' => 'файл ответа'] as $key => $label) {
                             if (empty($meta[$key])) continue;
-                            if (file_exists($claimDir . '/' . $meta[$key])) {
-                                $copied = copyImportFile($claimDir . '/' . $meta[$key], $uploadDir);
-                                if ($key === 'claim_file') $claimFileName = $copied; else $responseFileName = $copied;
-                            } else {
-                                $st['fileWarnings'][] = "📁 Папка «{$dirName}»: {$label} «{$meta[$key]}» не найден";
-                                $st['filesMissing']++;
+                            $first = true;
+                            foreach (splitAdditionalFiles((string)$meta[$key]) as $part) {
+                                $part = trim($part);
+                                if ($part === '') continue;
+                                if (file_exists($claimDir . '/' . $part)) {
+                                    $copied = copyImportFile($claimDir . '/' . $part, $uploadDir);
+                                    if ($copied) {
+                                        if ($first) {
+                                            if ($key === 'claim_file') $claimFileName = $copied; else $responseFileName = $copied;
+                                        } elseif (!in_array($copied, $additionalFileNames, true)) {
+                                            $additionalFileNames[] = $copied;
+                                        }
+                                    }
+                                } else {
+                                    $st['fileWarnings'][] = "📁 Папка «{$dirName}»: {$label} «{$part}» не найден";
+                                    $st['filesMissing']++;
+                                }
+                                $first = false;
                             }
                         }
 

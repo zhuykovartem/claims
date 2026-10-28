@@ -24,6 +24,28 @@ $deadline = getResponseDeadline($c['received_date']);   // дата «Срок �
 $answered = !empty($c['response_date']);                // ответ дан — счётчик остановлен
 $additional_files = $c['additional_files'] ? json_decode($c['additional_files'], true) : [];
 
+// ===== Вложения (step12): таблица + legacy-поля (записи от import.php) =====
+$attachments = getClaimAttachments($pdo, $c['id']);
+$attClaim    = array_values(array_filter($attachments, fn($a) => $a['file_kind'] === 'claim'));
+$attResponse = array_values(array_filter($attachments, fn($a) => $a['file_kind'] === 'response'));
+$hasClaimFiles    = !empty($c['claim_file'])    || count($attClaim) > 0;
+$hasResponseFiles = !empty($c['response_file']) || count($attResponse) > 0;
+$hasAnyFiles      = $hasClaimFiles || $hasResponseFiles || !empty($additional_files);
+
+// Иконка карточки по расширению файла
+function attachmentIcon(?string $name): string {
+    $ext = strtolower(pathinfo((string)$name, PATHINFO_EXTENSION));
+    return match($ext) {
+        'pdf' => 'bi-file-earmark-pdf',
+        'jpg', 'jpeg', 'png', 'gif' => 'bi-file-earmark-image',
+        'doc', 'docx' => 'bi-file-earmark-word',
+        'xls', 'xlsx' => 'bi-file-earmark-excel',
+        'ppt', 'pptx' => 'bi-file-earmark-slides',
+        'txt' => 'bi-file-earmark-text',
+        default => 'bi-file-earmark',
+    };
+}
+
 // ===== Переменные для шаблона =====
 $pageTitle = 'Претензия №' . getClaimNumber($pdo, $c['id']) . ' — Просмотр';
 $currentPage = 'view';
@@ -217,9 +239,12 @@ require 'templates/header.php';
                         до <strong><?= date('d.m.Y', strtotime($deadline)) ?></strong><?= !$answered && $days >= CLAIM_RESPONSE_DEADLINE_DAYS ? ' — истёк' : '' ?>
                     </p>
                 <?php endif; ?>
-                <?php if ($c['response_file']): ?>
+                <?php if ($hasResponseFiles): ?>
                     <div class="mt-3">
                         <span class="badge bg-success fs-6">✅ Ответ прикреплён</span>
+                        <?php if (count($attResponse) > 0): ?>
+                            <div class="mt-1 small text-muted">файлов ответа: <?= count($attResponse) ?></div>
+                        <?php endif; ?>
                     </div>
                 <?php else: ?>
                     <div class="mt-3">
@@ -265,16 +290,61 @@ require 'templates/header.php';
 <div class="mt-4">
     <h5 class="fw-bold mb-3">
         <i class="bi bi-paperclip"></i> Прикреплённые файлы
-        <small class="text-muted">(хранятся на диске)</small>
+        <small class="text-muted">(хранятся на диске; скачиваются с оригинальным именем)</small>
     </h5>
 
     <div class="row g-3">
+        <?php // ===== Файлы претензии (могут быть несколькими, step12) ===== ?>
+        <?php foreach ($attClaim as $i => $att): ?>
+            <div class="col-md-3">
+                <div class="card file-card shadow-sm text-center h-100 border-danger border-opacity-25">
+                    <div class="card-body d-flex flex-column align-items-center justify-content-center">
+                        <i class="bi <?= attachmentIcon(attachmentDisplayName($att)) ?> fs-1 text-danger mb-2"></i>
+                        <h6 class="fw-bold">Файл претензии<?= count($attClaim) > 1 ? ' ' . ($i + 1) : '' ?></h6>
+                        <small class="text-muted text-truncate d-block mb-1" style="max-width:100%;" title="<?= htmlspecialchars(attachmentDisplayName($att)) ?>">
+                            <?= htmlspecialchars(attachmentDisplayName($att)) ?>
+                        </small>
+                        <small class="text-muted mb-2">
+                            <?= $att['file_size'] ? formatBytes((int)$att['file_size']) . ' · ' : '' ?><?= date('d.m.Y', strtotime($att['uploaded_at'])) ?>
+                        </small>
+                        <a href="<?= attachmentLink((int)$att['id']) ?>" target="_blank"
+                           class="btn btn-sm btn-danger mt-auto">
+                            <i class="bi bi-eye"></i> Открыть файл
+                        </a>
+                    </div>
+                </div>
+            </div>
+        <?php endforeach; ?>
+
+        <?php // ===== Файлы ответа (могут быть несколькими, step12) ===== ?>
+        <?php foreach ($attResponse as $i => $att): ?>
+            <div class="col-md-3">
+                <div class="card file-card shadow-sm text-center h-100 border-success border-opacity-25">
+                    <div class="card-body d-flex flex-column align-items-center justify-content-center">
+                        <i class="bi <?= attachmentIcon(attachmentDisplayName($att)) ?> fs-1 text-success mb-2"></i>
+                        <h6 class="fw-bold">Файл ответа<?= count($attResponse) > 1 ? ' ' . ($i + 1) : '' ?></h6>
+                        <small class="text-muted text-truncate d-block mb-1" style="max-width:100%;" title="<?= htmlspecialchars(attachmentDisplayName($att)) ?>">
+                            <?= htmlspecialchars(attachmentDisplayName($att)) ?>
+                        </small>
+                        <small class="text-muted mb-2">
+                            <?= $att['file_size'] ? formatBytes((int)$att['file_size']) . ' · ' : '' ?><?= date('d.m.Y', strtotime($att['uploaded_at'])) ?>
+                        </small>
+                        <a href="<?= attachmentLink((int)$att['id']) ?>" target="_blank"
+                           class="btn btn-sm btn-success mt-auto">
+                            <i class="bi bi-eye"></i> Открыть файл
+                        </a>
+                    </div>
+                </div>
+            </div>
+        <?php endforeach; ?>
+
+        <?php // ===== Legacy-поля (записи от import.php, не открытые в редактировании) ===== ?>
         <?php if ($c['claim_file']): ?>
             <div class="col-md-3">
                 <div class="card file-card shadow-sm text-center h-100 border-danger border-opacity-25">
                     <div class="card-body d-flex flex-column align-items-center justify-content-center">
-                        <i class="bi bi-file-earmark-pdf fs-1 text-danger mb-2"></i>
-                        <h6 class="fw-bold">Претензия</h6>
+                        <i class="bi <?= attachmentIcon($c['claim_file']) ?> fs-1 text-danger mb-2"></i>
+                        <h6 class="fw-bold">Претензия <small class="text-muted fw-normal">(импорт)</small></h6>
                         <small class="text-muted text-truncate d-block mb-2" style="max-width:100%;">
                             <?= htmlspecialchars(basename($c['claim_file'])) ?>
                         </small>
@@ -291,8 +361,8 @@ require 'templates/header.php';
             <div class="col-md-3">
                 <div class="card file-card shadow-sm text-center h-100 border-success border-opacity-25">
                     <div class="card-body d-flex flex-column align-items-center justify-content-center">
-                        <i class="bi bi-file-earmark-pdf fs-1 text-success mb-2"></i>
-                        <h6 class="fw-bold">Ответ на претензию</h6>
+                        <i class="bi <?= attachmentIcon($c['response_file']) ?> fs-1 text-success mb-2"></i>
+                        <h6 class="fw-bold">Ответ на претензию <small class="text-muted fw-normal">(импорт)</small></h6>
                         <small class="text-muted text-truncate d-block mb-2" style="max-width:100%;">
                             <?= htmlspecialchars(basename($c['response_file'])) ?>
                         </small>
@@ -310,7 +380,7 @@ require 'templates/header.php';
                 <div class="col-md-3">
                     <div class="card file-card shadow-sm text-center h-100 border-secondary border-opacity-25">
                         <div class="card-body d-flex flex-column align-items-center justify-content-center">
-                            <i class="bi bi-file-earmark fs-1 text-secondary mb-2"></i>
+                            <i class="bi <?= attachmentIcon($f) ?> fs-1 text-secondary mb-2"></i>
                             <h6 class="fw-bold">Доп. документ <?= $i + 1 ?></h6>
                             <small class="text-muted text-truncate d-block mb-2" style="max-width:100%;">
                                 <?= htmlspecialchars(basename($f)) ?>
@@ -325,7 +395,7 @@ require 'templates/header.php';
             <?php endforeach; ?>
         <?php endif; ?>
 
-        <?php if (!$c['claim_file'] && !$c['response_file'] && empty($additional_files)): ?>
+        <?php if (!$hasAnyFiles): ?>
             <div class="col-12">
                 <div class="text-center text-muted py-5 bg-light rounded">
                     <i class="bi bi-file-earmark-x fs-2 d-block mb-2"></i>
@@ -345,8 +415,8 @@ require 'templates/header.php';
     <a href="edit.php?id=<?= $c['id'] ?>" class="btn btn-warning">
         <i class="bi bi-pencil"></i> Редактировать
     </a>
-    <?php if (!$c['response_file']): ?>
-        <a href="edit.php?id=<?= $c['id'] ?>#response_file" class="btn btn-success">
+    <?php if (!$hasResponseFiles): ?>
+        <a href="edit.php?id=<?= $c['id'] ?>" class="btn btn-success">
             <i class="bi bi-reply-all"></i> Прикрепить ответ
         </a>
     <?php endif; ?>

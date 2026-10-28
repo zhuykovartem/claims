@@ -17,6 +17,9 @@ if (!$delClaim) {
 $error = '';
 $additionalFiles = $delClaim['additional_files'] ? json_decode($delClaim['additional_files'], true) : [];
 
+// Вложения из таблицы claim_attachments (step12)
+$delAttachments = getClaimAttachments($pdo, $id);
+
 // ===== CSRF-проверка + удаление через POST =====
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requireCsrfToken();
@@ -30,6 +33,14 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         foreach ($additionalFiles as $f) {
             deleteUploadIfUnused($pdo, (string)$f, $id);
         }
+    }
+
+    // Вложения из таблицы (step12): сначала строки, потом файлы с диска
+    foreach ($delAttachments as $att) {
+        try {
+            $pdo->prepare("DELETE FROM claim_attachments WHERE id = ?")->execute([$att['id']]);
+        } catch (PDOException $e) { /* таблицы нет — нечего удалять */ }
+        deleteUploadIfUnused($pdo, (string)$att['stored_name'], $id);
     }
 
     logAction('delete', 'claim', $id, 'Удалена претензия: ' . mb_substr($delClaim['subject'], 0, 100));
@@ -69,10 +80,13 @@ require 'templates/header.php';
                         <strong>Предмет:</strong> <?= htmlspecialchars(mb_substr($delClaim['subject'], 0, 200)) ?>
                     </p>
 
-                    <?php if ($delClaim['claim_file'] || $delClaim['response_file'] || !empty($additionalFiles)): ?>
+                    <?php if ($delClaim['claim_file'] || $delClaim['response_file'] || !empty($additionalFiles) || count($delAttachments) > 0): ?>
                         <div class="alert alert-warning mx-auto" style="max-width: 500px;">
                             <i class="bi bi-paperclip"></i>
-                            <strong>Вместе с претензией будут удалены все прикреплённые файлы!</strong>
+                            <strong>Вместе с претензией будут удалены все прикреплённые файлы!
+                            <?php if (count($delAttachments) > 0): ?>
+                                (вложений: <?= count($delAttachments) ?>)
+                            <?php endif; ?></strong>
                         </div>
                     <?php endif; ?>
 

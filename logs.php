@@ -69,7 +69,8 @@ $actionIcons = [
     'create'          => '🟢', 'update'          => '🟡',
     'delete'          => '🔴', 'password_change' => '🔑',
     'toggle_active'   => '🔄', 'import'          => '📥',
-    'export'          => '📤',
+    'export'          => '📤', 'attachment_delete' => '📎',
+    'attachment_error' => '⚠️',
 ];
 
 $entityLabels = [

@@ -53,27 +53,65 @@ foreach ($claims as $c) {
     $claimDir = $tmpDir . '/' . $folderName;
     @mkdir($claimDir, 0755, true);
 
-    // ===== Копируем файлы в папку претензии (оригинальные имена) =====
-    $claimFileInFolder = '';
-    $responseFileInFolder = '';
+    // ===== Копируем файлы в папку претензии (оригинальные имена, step12) =====
+    // Источники: таблица claim_attachments (файлы претензии/ответа),
+    // legacy-поля claim_file/response_file (записи от import.php),
+    // JSON-поле additional_files (доп. документы).
+    $claimFileNames = [];    // имена файлов претензии внутри папки архива
+    $responseFileNames = []; // имена файлов ответа внутри папки архива
     $addFilesInFolder = [];
+    $usedInFolder = [];      // дедупликация имён внутри одной папки претензии
 
-    if ($c['claim_file'] && file_exists($uploadDir . $c['claim_file'])) {
-        $claimFileInFolder = $c['claim_file'];  // оригинальное имя без префикса
-        copy($uploadDir . $c['claim_file'], $claimDir . '/' . $claimFileInFolder);
+    // Копирование файла в папку архива с уникальным оригинальным именем:
+    // при совпадении «doc.pdf» → «doc_2.pdf». Возвращает имя в папке или null.
+    $copyToClaimFolder = function (string $storedName, string $displayName) use ($uploadDir, $claimDir, &$usedInFolder): ?string {
+        $src = $uploadDir . basename($storedName);
+        if (!is_file($src)) return null;
+        $name = trim($displayName) !== '' ? $displayName : basename($storedName);
+        $name = preg_replace('/[\/\\:*?"<>|]+/u', '_', $name);
+        if ($name === '' || $name === null) $name = basename($storedName);
+        if (isset($usedInFolder[$name]) || file_exists($claimDir . '/' . $name)) {
+            $pi = pathinfo($name);
+            $extPart = isset($pi['extension']) && $pi['extension'] !== '' ? '.' . $pi['extension'] : '';
+            $n = 2;
+            while (isset($usedInFolder[$pi['filename'] . '_' . $n . $extPart])
+                || file_exists($claimDir . '/' . $pi['filename'] . '_' . $n . $extPart)) {
+                $n++;
+            }
+            $name = $pi['filename'] . '_' . $n . $extPart;
+        }
+        if (!@copy($src, $claimDir . '/' . $name)) return null;
+        $usedInFolder[$name] = true;
+        return $name;
+    };
+
+    // Вложения из таблицы (step12)
+    $atts = getClaimAttachments($pdo, (int)$c['id']);
+    foreach ($atts as $att) {
+        $inFolder = $copyToClaimFolder((string)$att['stored_name'], (string)$att['original_name']);
+        if ($inFolder === null) continue;
+        if ($att['file_kind'] === 'claim') {
+            $claimFileNames[] = $inFolder;
+        } else {
+            $responseFileNames[] = $inFolder;
+        }
     }
 
-    if ($c['response_file'] && file_exists($uploadDir . $c['response_file'])) {
-        $responseFileInFolder = $c['response_file'];  // оригинальное имя без префикса
-        copy($uploadDir . $c['response_file'], $claimDir . '/' . $responseFileInFolder);
+    // Legacy-поля (файлы, ещё не перенесённые в таблицу — записи от import.php)
+    $attStoredNames = array_column($atts, 'stored_name');
+    if ($c['claim_file'] && !in_array($c['claim_file'], $attStoredNames, true)) {
+        $inFolder = $copyToClaimFolder($c['claim_file'], basename($c['claim_file']));
+        if ($inFolder !== null) $claimFileNames[] = $inFolder;
+    }
+    if ($c['response_file'] && !in_array($c['response_file'], $attStoredNames, true)) {
+        $inFolder = $copyToClaimFolder($c['response_file'], basename($c['response_file']));
+        if ($inFolder !== null) $responseFileNames[] = $inFolder;
     }
 
     $addFilesArr = $c['additional_files'] ? json_decode($c['additional_files'], true) : [];
     foreach ($addFilesArr as $af) {
-        if (file_exists($uploadDir . $af)) {
-            $addFilesInFolder[] = $af;  // оригинальное имя, без префикса add_
-            copy($uploadDir . $af, $claimDir . '/' . $af);
-        }
+        $inFolder = $copyToClaimFolder((string)$af, basename((string)$af));
+        if ($inFolder !== null) $addFilesInFolder[] = $inFolder;
     }
 
     // ===== Создаём meta.ini =====
@@ -98,9 +136,12 @@ foreach ($claims as $c) {
     $meta .= "response_date = " . ($c['response_date'] ?? '') . "\n";
     $meta .= "days_passed = " . $days . "\n";
     $meta .= "status_label = " . $statusLabel . "\n";
-    $meta .= "claim_file = " . $claimFileInFolder . "\n";
-    $meta .= "response_file = " . $responseFileInFolder . "\n";
-    $meta .= "additional_files = " . implode(', ', $addFilesInFolder) . "\n";
+    // В INI нельзя переносить строки (parse_ini_file сломается) — сплющиваем в одну строку.
+    // Списки файлов (step12) пишем JSON-массивом: «;» в INI — комментарий,
+    // а splitAdditionalFiles()/impMetaFileList() понимают JSON.
+    $meta .= "claim_file = " . (count($claimFileNames) > 1 ? json_encode($claimFileNames, JSON_UNESCAPED_UNICODE) : (string)($claimFileNames[0] ?? '')) . "\n";
+    $meta .= "response_file = " . (count($responseFileNames) > 1 ? json_encode($responseFileNames, JSON_UNESCAPED_UNICODE) : (string)($responseFileNames[0] ?? '')) . "\n";
+    $meta .= "additional_files = " . (count($addFilesInFolder) > 1 ? json_encode($addFilesInFolder, JSON_UNESCAPED_UNICODE) : implode(', ', $addFilesInFolder)) . "\n";
     file_put_contents($claimDir . '/meta.ini', $meta);
 
     // Строка для сводного CSV (csvSafe — защита от CSV-инъекции: ячейки, начинающиеся с = + - @)
@@ -117,8 +158,8 @@ foreach ($claims as $c) {
         csvSafe($c['recipient_name'] ?? ''),
         csvSafe($c['response_direction'] ?? ''),
         $c['response_date'] ?? '',
-        $claimFileInFolder,
-        $responseFileInFolder,
+        implode('; ', $claimFileNames),
+        implode('; ', $responseFileNames),
         implode('; ', $addFilesInFolder),
         $days,
         $statusLabel,
