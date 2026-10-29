@@ -337,8 +337,8 @@ require 'templates/header.php';
                                 <textarea name="additional_notes" class="form-control" rows="2" placeholder="Свободные заметки по претензии: договорённости, особые условия, ссылки на связанные документы и т.п."><?= htmlspecialchars($_POST['additional_notes'] ?? '') ?></textarea>
                             </div>
 
-                            <div class="col-md-5">
-                                <div class="upload-block">
+                            <div class="col-12 col-lg-4 d-flex">
+                                <div class="upload-block w-100">
                                     <label class="form-label fw-semibold">📄 Файл претензии <small class="text-muted fw-normal">(можно несколько, до <?= ATTACHMENTS_MAX_PER_KIND ?>)</small></label>
                                     <div class="dropzone" data-input="claim_files">
                                         <div class="dropzone-message">
@@ -351,8 +351,8 @@ require 'templates/header.php';
                                 </div>
                             </div>
 
-                            <div class="col-md-5">
-                                <div class="upload-block">
+                            <div class="col-12 col-lg-4 d-flex">
+                                <div class="upload-block w-100">
                                     <label class="form-label fw-semibold">📄 Файл ответа <small class="text-muted fw-normal">(можно несколько, до <?= ATTACHMENTS_MAX_PER_KIND ?>)</small></label>
                                     <div class="dropzone" data-input="response_files">
                                         <div class="dropzone-message">
@@ -365,10 +365,10 @@ require 'templates/header.php';
                                 </div>
                             </div>
 
-                            <div class="col-md-5">
-                                <div class="upload-block">
+                            <div class="col-12 col-lg-4 d-flex">
+                                <div class="upload-block w-100">
                                     <label class="form-label fw-semibold">📎 Дополнительные файлы <small class="text-muted">(можно несколько)</small></label>
-                                    <div class="dropzone" data-input="additional_files">
+                                    <div class="dropzone" data-input="additional_files" data-max="0">
                                         <div class="dropzone-message">
                                             <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
                                             <span>Перетащите файлы сюда или <strong>нажмите для выбора</strong></span>
@@ -413,7 +413,11 @@ function formatBytesJs(b) {
 document.querySelectorAll('.dropzone').forEach(zone => {
     const inputId = zone.dataset.input;
     const input = document.getElementById(inputId);
-    const maxFiles = parseInt(zone.dataset.max || ATTACHMENTS_MAX_PER_KIND, 10);
+    // step12f: data-max="0" — блок БЕЗ лимита (дополнительные файлы);
+    // иначе лимит берётся из data-max, а по умолчанию — ATTACHMENTS_MAX_PER_KIND
+    const maxFiles = zone.dataset.max === '0'
+        ? Infinity
+        : parseInt(zone.dataset.max || ATTACHMENTS_MAX_PER_KIND, 10);
     const canDt = (typeof DataTransfer !== 'undefined');
     let picked = []; // ещё не отправленные файлы этого блока
 
@@ -461,8 +465,9 @@ document.querySelectorAll('.dropzone').forEach(zone => {
             counter.className = 'dropzone-count text-muted d-block mt-1';
             zone.appendChild(counter);
         }
+        const limitText = maxFiles === Infinity ? '' : ' из ' + maxFiles;
         counter.textContent = source.length > 0
-            ? 'Выбрано файлов: ' + source.length + ' из ' + maxFiles
+            ? 'Выбрано файлов: ' + source.length + limitText
             : '';
         zone.classList.toggle('has-file', source.length > 0);
     }
@@ -536,19 +541,22 @@ document.addEventListener("DOMContentLoaded", function() {
 
     if (!objectSelect || !recipientSelect) return;
 
-    const companyMap = {};
-    <?php
-    $allObjects = $pdo->query("SELECT id FROM objects")->fetchAll();
-    foreach ($allObjects as $obj):
+    // step12f: карта компаний собирается в PHP и выводится ОДНИМ json_encode.
+    // Прежняя связка htmlspecialchars(addslashes()) не предназначена для JS-строк:
+    // кавычки и слэши в названии компании ломали JS-объект и выпадающие списки.
+    const companyMap = <?php
+    $companyMapJs = [];
+    foreach ($pdo->query("SELECT id FROM objects")->fetchAll() as $obj) {
         $comps = getCompaniesByObject($pdo, $obj['id']);
-        if (count($comps)):
-    ?>
-        companyMap[<?= $obj["id"] ?>] = [
-            <?php foreach ($comps as $comp): ?>
-                {id: <?= $comp["id"] ?>, name: "<?= htmlspecialchars(addslashes($comp["name"])) ?>", role: "<?= $comp["role"] ?>"},
-            <?php endforeach; ?>
-        ];
-    <?php endif; endforeach; ?>
+        if (count($comps)) {
+            $companyMapJs[(int)$obj['id']] = array_map(
+                static fn($c) => ['id' => (int)$c['id'], 'name' => (string)$c['name'], 'role' => (string)$c['role']],
+                array_values($comps)
+            );
+        }
+    }
+    echo json_encode($companyMapJs, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+    ?>;
 
     function updateRecipients() {
         const objId = objectSelect.value;

@@ -4,8 +4,11 @@ requireAuth();
 requireRole('admin'); // диагностика схемы БД и сервера — только администратору
 
 // ============================================================
-// step12c: страница диагностики хранилища вложений.
+// step12c/step12f: страница диагностики хранилища вложений.
 // Показывает ТОЛЬКО схему и счётчики (без содержимого документов):
+//   0) ЦЕЛОСТНОСТЬ ФАЙЛОВ ПАКЕТА (step12f): sha1 и размер ключевых php-файлов
+//      против эталонного манифеста — ловит обрезанные/повреждённые при
+//      замене файлы (причина «форма обрывается, нет кнопки сохранения»);
 //   1) настройки PHP веб-сервера (upload_max_filesize, post_max_size,
 //      max_file_uploads — именно те, что действуют при загрузке из браузера);
 //   2) папку UPLOAD_DIR (существует, доступна для записи, свободное место);
@@ -48,6 +51,30 @@ if ($dirWritable) {
         $probeErr = 'пробный файл записать не удалось (права/SELinux/appArmor?)';
     }
 }
+
+// ---------- step12f: целостность файлов пакета ----------
+// Манифест подставляется сборочным скриптом (build_step12f.sh) в момент сборки
+// zip-пакета. Если манифест пуст — страница запущена вне пакета (например,
+// из git-репозитория): раздел покажет размеры/хэши, но без вердикта.
+$PKG_SHA1 = /*STEP12F_MANIFEST*/['add.php' => '1db05a25b61ed93927158b2c7cfbd905f7a4a059', 'config.php' => '9ad27434444cbdcf9e7679a29fbf125c3bb856d1', 'delete.php' => 'c19bb18e6fb7f697af34792431d9da60b568f4bc', 'download.php' => '32f1ef779efb6de8142c464e4915c3e28afe68ca', 'edit.php' => 'cce852a3a1b334de04794ccb0c7fa8b3d3ffd478', 'view.php' => '5646b22f24c49de127db898f1404fa72b072905a']/*STEP12F_END*/;
+$fileReport = [];   // [file => ['exists'=>bool,'size'=>int|false,'sha1'=>string|false,'ok'=>bool|null]]
+$fileProblems = [];
+foreach ($PKG_SHA1 as $pkgFile => $pkgSha) {
+    $path = __DIR__ . '/' . $pkgFile;
+    $rec  = ['exists' => is_file($path), 'size' => false, 'sha1' => false, 'ok' => null];
+    if ($rec['exists']) {
+        $rec['size'] = @filesize($path);
+        $rec['sha1'] = @sha1_file($path) ?: false;
+        $rec['ok']   = hash_equals((string)$pkgSha, (string)$rec['sha1']);
+        if (!$rec['ok']) {
+            $fileProblems[] = $pkgFile;
+        }
+    } else {
+        $fileProblems[] = $pkgFile;
+    }
+    $fileReport[$pkgFile] = $rec;
+}
+$manifestActive = !empty($PKG_SHA1);
 
 // ---------- Таблица claim_attachments ----------
 $tableExists = false;
@@ -141,6 +168,36 @@ if (!$tableExists) {
         }
     }
 }
+// step12f: лимит одновременной загрузки файлов в PHP.
+// Считаются ВСЕ файлы одной формы суммарно (претензия + ответ + дополнительные);
+// при превышении PHP молча отбрасывает лишние ещё до нашего кода.
+$maxFileUploads = (int)ini_get('max_file_uploads');
+if ($maxFileUploads > 0 && $maxFileUploads < 30) {
+    $problems[] = [
+        'title'  => 'PHP принимает не более ' . $maxFileUploads . ' файлов за один запрос (max_file_uploads)',
+        'detail' => 'Лимит действует на ВСЕ файлы формы суммарно: файлы претензии + файлы ответа + '
+                  . 'дополнительные. При превышении PHP молча отбрасывает лишние файлы ещё до '
+                  . 'нашего кода — сохранится меньше, чем выбрали в форме.',
+        'fix'    => 'В php.ini веб-сервера (/etc/php/8.2/apache2/php.ini) установите:\n'
+                  . "  max_file_uploads = 30\n"
+                  . 'и перезапустите apache: systemctl restart apache2',
+    ];
+}
+if ($manifestActive && !empty($fileProblems)) {
+    $problems[] = [
+        'title'  => 'Файл(ы) на сервере не совпадают с пакетом: ' . implode(', ', $fileProblems),
+        'detail' => 'Размер или контрольная сумма файла на сервере отличается от эталонной '
+                  . 'из пакета step12f. Чаще всего файл обрезан или повреждён при замене '
+                  . '(копирование текста вручную, обрыв FTP, ограничения панели хостинга). '
+                  . 'Именно поэтому форма может обрываться: нет блока «Файл ответа», '
+                  . 'кнопки «Сохранить изменения» и футера страницы.',
+        'fix'    => 'Загрузите указанные файлы заново: либо откройте deploy_step12f.php '
+                  . 'из пакета (он сам запишет файлы байт-в-байт и проверит), либо '
+                  . 'распакуйте zip на сервере поверх файлов сайта (бинарная замена, '
+                  . 'НЕ копирование текста вручную). Затем обновите эту страницу — '
+                  . 'все строки раздела 0 должны стать зелёными.',
+    ];
+}
 if (!$dirExists) {
     $problems[] = [
         'title'  => 'Папка UPLOAD_DIR не существует',
@@ -203,8 +260,9 @@ require 'templates/header.php';
 <?php if ($allOk): ?>
     <div class="alert alert-success verdict-ok mb-4">
         <strong><i class="bi bi-check-circle"></i> Вердикт: критичных проблем не найдено.</strong><br>
-        Хранилище вложений полностью исправно: таблица есть, индексы не ограничивают количество файлов,
-        папка UPLOAD_DIR доступна для записи. Если файлы всё равно не прикрепляются —
+        Файлы пакета целы (раздел 0), хранилище вложений исправно: таблица есть, индексы не ограничивают
+        количество файлов, папка UPLOAD_DIR доступна для записи. Если формы всё равно выглядят
+        обрезанными — обновите страницу с очисткой кэша браузера (Ctrl+F5); при повторении
         откройте <a href="logs.php" class="alert-link">Журнал (logs.php)</a> и найдите события
         <code>attachment_error</code>: после step12c они содержат точную причину каждого сбоя.
     </div>
@@ -230,6 +288,52 @@ require 'templates/header.php';
             </div>
         </div>
     <?php endforeach; ?>
+
+    <!-- ===== 0. Целостность файлов пакета (step12f) ===== -->
+    <div class="col-12">
+        <div class="card shadow-sm border-0 <?= $manifestActive ? ($fileProblems ? 'verdict-bad' : 'verdict-ok') : '' ?>">
+            <div class="card-body">
+                <h5 class="fw-bold mb-3"><i class="bi bi-file-earmark-check"></i> 0. Целостность файлов пакета (sha1)</h5>
+                <?php if (!$manifestActive): ?>
+                    <div class="alert alert-light border mb-0">
+                        Эталонный манифест не подставлен: страница запущена вне собранного пакета
+                        (например, из репозитория). Сравнивать не с чем — раздел показывает только фактические
+                        размеры и хэши. После установки пакета step12f (deploy_step12f.php или zip) здесь
+                        появится построчная проверка.
+                    </div>
+                <?php else: ?>
+                    <div class="table-responsive">
+                        <table class="table table-sm table-bordered mb-2">
+                            <thead><tr><th>Файл</th><th>Найден</th><th>Размер, байт</th><th>sha1</th><th>Совпадение с пакетом</th></tr></thead>
+                            <tbody>
+                                <?php foreach ($fileReport as $fName => $r): ?>
+                                    <tr<?= $r['ok'] === false ? ' class="table-danger"' : '' ?>>
+                                        <td class="fw-semibold"><code><?= htmlspecialchars($fName) ?></code></td>
+                                        <td><?= $r['exists'] ? '✅' : '❌ нет файла' ?></td>
+                                        <td><?= $r['size'] !== false ? number_format((int)$r['size'], 0, ',', ' ') : '—' ?></td>
+                                        <td><code class="small"><?= $r['sha1'] ? htmlspecialchars(substr((string)$r['sha1'], 0, 12)) . '…' : '—' ?></code></td>
+                                        <td><?=
+                                            $r['ok'] === true
+                                                ? '<span class="badge bg-success">✅ совпадает</span>'
+                                                : ($r['ok'] === false
+                                                    ? '<span class="badge bg-danger">❌ файл обрезан/заменён — загрузите заново</span>'
+                                                    : '<span class="badge bg-secondary">—</span>')
+                                        ?></td>
+                                    </tr>
+                                <?php endforeach; ?>
+                            </tbody>
+                        </table>
+                    </div>
+                    <small class="text-muted">
+                        Обрезанный файл — главная причина «форма без блока «Файл ответа» и без кнопки
+                        «Сохранить изменения»»: страница рендерится до места обрыва и молча заканчивается.
+                        Если хотя бы одна строка красная — переустановите пакет через deploy_step12f.php
+                        или распаковкой zip на сервере (НЕ копированием текста вручную).
+                    </small>
+                <?php endif; ?>
+            </div>
+        </div>
+    </div>
 
     <!-- ===== 1. PHP-настройки загрузки ===== -->
     <div class="col-lg-6">

@@ -98,8 +98,9 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     // ===== step12: вложения — удаление и добавление =====
     $deleteIds      = array_values(array_unique(array_map('intval', (array)($_POST['delete_attachments'] ?? []))));
-    $claimSlots     = normalizeUploadSlots($_FILES['claim_files'] ?? null);
-    $responseSlots  = normalizeUploadSlots($_FILES['response_files'] ?? null);
+    $claimSlots       = normalizeUploadSlots($_FILES['claim_files'] ?? null);
+    $responseSlots    = normalizeUploadSlots($_FILES['response_files'] ?? null);
+    $additionalSlots  = normalizeUploadSlots($_FILES['additional_files'] ?? null); // step12f
     $attachmentWarnings = [];
 
     // Принимаем к удалению только те файлы, что принадлежат этой претензии
@@ -123,6 +124,13 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             if (empty($error)) {
                 foreach ($responseSlots as $slot) {
                     $msg = validateUploadSlot($slot, 'ответа');
+                    if ($msg !== '') { $error = $msg; break; }
+                }
+            }
+            // step12f: доп. файлы валидируются ДО записи, как файлы претензии/ответа
+            if (empty($error)) {
+                foreach ($additionalSlots as $slot) {
+                    $msg = validateUploadSlot($slot, 'доп. файла');
                     if ($msg !== '') { $error = $msg; break; }
                 }
             }
@@ -161,29 +169,38 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             logAction('attachment_delete', 'claim', $id, 'Удалено вложение: ' . attachmentDisplayName($att));
         }
 
-        // Дополнительные файлы (legacy JSON-поле claims.additional_files)
-        $additional_files = $claim['additional_files'] ? json_decode($claim['additional_files'], true) : [];
-        if (!empty($_FILES['additional_files']['name'][0])) {
-            foreach ($_FILES['additional_files']['name'] as $key => $name) {
-                if ($_FILES['additional_files']['error'][$key] === UPLOAD_ERR_OK) {
-                    if (!isAllowedFileType($_FILES['additional_files']['tmp_name'][$key])) {
-                        continue; // уже валидировались в прошлых версиях — пропускаем молча
-                    }
-                    $ext = uploadExtension($name);
-                    if ($ext === '') continue;
-                    $fname = 'add_' . time() . '_' . bin2hex(random_bytes(4)) . '_' . $key . '.' . $ext;
-                    if (!move_uploaded_file($_FILES['additional_files']['tmp_name'][$key], UPLOAD_DIR . $fname)) {
-                        continue;
-                    }
-                    $additional_files[] = $fname;
-                }
+        // Дополнительные файлы (legacy JSON-поле claims.additional_files) — step12f:
+        // единый механизм со step12: normalizeUploadSlots + валидация ДО записи
+        // (сделана выше) + предупреждения вместо молчаливых пропусков +
+        // защищённый разбор JSON (битый JSON больше не вызывает предупреждений)
+        $additionalFiles = [];
+        if (!empty($claim['additional_files'])) {
+            $decoded = json_decode((string)$claim['additional_files'], true);
+            if (is_array($decoded)) {
+                $additionalFiles = array_values(array_filter(
+                    $decoded,
+                    static fn($file) => is_string($file) && $file !== ''
+                ));
             }
-            $pdo->prepare("UPDATE claims SET additional_files = ? WHERE id = ?")
-                ->execute([
-                    !empty($additional_files) ? json_encode($additional_files, JSON_UNESCAPED_UNICODE) : null,
-                    $id
-                ]);
         }
+        foreach ($additionalSlots as $key => $slot) {
+            $ext = uploadExtension((string)$slot['name']);
+            if ($ext === '') {
+                $attachmentWarnings[] = 'Доп. файл «' . $slot['name'] . '» пропущен: тип или расширение не разрешены';
+                continue;
+            }
+            $fname = 'add_' . time() . '_' . $key . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
+            if (!move_uploaded_file((string)$slot['tmp_name'], UPLOAD_DIR . $fname)) {
+                $attachmentWarnings[] = 'Не удалось сохранить доп. файл «' . $slot['name'] . '» на сервер';
+                continue;
+            }
+            $additionalFiles[] = $fname;
+        }
+        $pdo->prepare("UPDATE claims SET additional_files = ? WHERE id = ?")
+            ->execute([
+                !empty($additionalFiles) ? json_encode(array_values($additionalFiles), JSON_UNESCAPED_UNICODE) : null,
+                $id
+            ]);
 
         // Добавление новых вложений (валидация пройдена выше; сбои диска/БД — в журнал)
         foreach ($claimSlots as $slot) {
@@ -383,8 +400,8 @@ require 'templates/header.php';
                                 <textarea name="additional_notes" class="form-control" rows="2" placeholder="Свободные заметки по претензии: договорённости, особые условия, ссылки на связанные документы и т.п."><?= htmlspecialchars($claim['additional_notes'] ?? '') ?></textarea>
                             </div>
 
-                            <div class="col-md-5">
-                                <div class="upload-block">
+                            <div class="col-12 col-lg-4 d-flex">
+                                <div class="upload-block w-100">
                                     <label class="form-label fw-semibold">📄 Файл претензии <small class="text-muted fw-normal">(можно несколько, до <?= ATTACHMENTS_MAX_PER_KIND ?>)</small></label>
                                     <?php if (!empty($attClaim)): ?>
                                         <div class="mb-2">
@@ -413,8 +430,8 @@ require 'templates/header.php';
                                 </div>
                             </div>
 
-                            <div class="col-md-5">
-                                <div class="upload-block">
+                            <div class="col-12 col-lg-4 d-flex">
+                                <div class="upload-block w-100">
                                     <label class="form-label fw-semibold">📄 Файл ответа <small class="text-muted fw-normal">(можно несколько, до <?= ATTACHMENTS_MAX_PER_KIND ?>)</small></label>
                                     <?php if (!empty($attResponse)): ?>
                                         <div class="mb-2">
@@ -443,10 +460,10 @@ require 'templates/header.php';
                                 </div>
                             </div>
 
-                            <div class="col-md-5">
-                                <div class="upload-block">
+                            <div class="col-12 col-lg-4 d-flex">
+                                <div class="upload-block w-100">
                                     <label class="form-label fw-semibold">📎 Дополнительные файлы <small class="text-muted fw-normal">(можно несколько)</small></label>
-                                    <div class="dropzone" data-input="additional_files">
+                                    <div class="dropzone" data-input="additional_files" data-max="0">
                                         <div class="dropzone-message">
                                             <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>
                                             <span>Перетащите файлы или <strong>нажмите</strong></span>
@@ -506,7 +523,11 @@ document.querySelectorAll('.att-del-check').forEach(chk => {
 document.querySelectorAll('.dropzone').forEach(zone => {
     const inputId = zone.dataset.input;
     const input = document.getElementById(inputId);
-    const maxFiles = parseInt(zone.dataset.max || ATTACHMENTS_MAX_PER_KIND, 10);
+    // step12f: data-max="0" — блок БЕЗ лимита (дополнительные файлы);
+    // иначе лимит берётся из data-max, а по умолчанию — ATTACHMENTS_MAX_PER_KIND
+    const maxFiles = zone.dataset.max === '0'
+        ? Infinity
+        : parseInt(zone.dataset.max || ATTACHMENTS_MAX_PER_KIND, 10);
     const canDt = (typeof DataTransfer !== 'undefined');
     let picked = []; // ещё не отправленные файлы этого блока
 
@@ -554,8 +575,9 @@ document.querySelectorAll('.dropzone').forEach(zone => {
             counter.className = 'dropzone-count text-muted d-block mt-1';
             zone.appendChild(counter);
         }
+        const limitText = maxFiles === Infinity ? '' : ' из ' + maxFiles;
         counter.textContent = source.length > 0
-            ? 'Выбрано новых файлов: ' + source.length + ' из ' + maxFiles
+            ? 'Выбрано новых файлов: ' + source.length + limitText
             : '';
         zone.classList.toggle('has-file', source.length > 0);
     }
@@ -628,19 +650,22 @@ document.addEventListener("DOMContentLoaded", function() {
     const recipientSelect = document.getElementById("editRecipientSelect");
     if (!objectSelect || !recipientSelect) return;
 
-    const companyMap = {};
-    <?php
-    $allObjects = $pdo->query("SELECT id FROM objects")->fetchAll();
-    foreach ($allObjects as $obj):
+    // step12f: карта компаний собирается в PHP и выводится ОДНИМ json_encode.
+    // Прежняя связка htmlspecialchars(addslashes()) не предназначена для JS-строк:
+    // кавычки и слэши в названии компании ломали JS-объект и выпадающие списки.
+    const companyMap = <?php
+    $companyMapJs = [];
+    foreach ($pdo->query("SELECT id FROM objects")->fetchAll() as $obj) {
         $comps = getCompaniesByObject($pdo, $obj['id']);
-        if (count($comps)):
-    ?>
-        companyMap[<?= $obj["id"] ?>] = [
-            <?php foreach ($comps as $comp): ?>
-                {id: <?= $comp["id"] ?>, name: "<?= htmlspecialchars(addslashes($comp["name"])) ?>", role: "<?= $comp["role"] ?>"},
-            <?php endforeach; ?>
-        ];
-    <?php endif; endforeach; ?>
+        if (count($comps)) {
+            $companyMapJs[(int)$obj['id']] = array_map(
+                static fn($c) => ['id' => (int)$c['id'], 'name' => (string)$c['name'], 'role' => (string)$c['role']],
+                array_values($comps)
+            );
+        }
+    }
+    echo json_encode($companyMapJs, JSON_UNESCAPED_UNICODE | JSON_HEX_TAG | JSON_HEX_AMP | JSON_HEX_APOS | JSON_HEX_QUOT);
+    ?>;
 
     const currentRecipientId = <?= $claim['recipient_id'] ? (int)$claim['recipient_id'] : 'null' ?>;
 

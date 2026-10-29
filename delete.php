@@ -31,8 +31,30 @@ $delAttachments = getClaimAttachments($pdo, $id);
 if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     requireCsrfToken();
 
-    // Удаляем файлы с диска ТОЛЬКО если на них не ссылается другая претензия
-    // (один файл может быть прикреплён к нескольким записям после импорта)
+    // step12f: сначала БД (одной транзакцией), затем файлы на диске.
+    // Прежний порядок удалял файлы ДО DELETE FROM claims — если SQL-запрос
+    // падал, запись оставалась, а файлы были уже потеряны. Теперь при ошибке
+    // БД транзакция откатывается и файлы остаются на месте.
+    $pdo->beginTransaction();
+    try {
+        // Вложения из таблицы (step12): сначала строки
+        foreach ($delAttachments as $att) {
+            try {
+                $pdo->prepare("DELETE FROM claim_attachments WHERE id = ?")->execute([$att['id']]);
+            } catch (PDOException $e) { /* таблицы нет — нечего удалять */ }
+        }
+        $pdo->prepare("DELETE FROM claims WHERE id = ?")->execute([$id]);
+        $pdo->commit();
+    } catch (PDOException $e) {
+        $pdo->rollBack();
+        http_response_code(500);
+        die('Не удалось удалить претензию: ошибка базы данных — ' . htmlspecialchars($e->getMessage())
+            . '. Файлы на диске не тронуты, запись цела — попробуйте ещё раз.');
+    }
+
+    // БД успешно обновлена — освобождаем диск от файлов, на которые больше нет
+    // ссылок (один файл может быть прикреплён к нескольким записям после импорта —
+    // deleteUploadIfUnused удалит его, только если ссылок не осталось)
     deleteUploadIfUnused($pdo, $delClaim['claim_file'], $id);
     deleteUploadIfUnused($pdo, $delClaim['response_file'], $id);
 
@@ -41,19 +63,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             deleteUploadIfUnused($pdo, (string)$f, $id);
         }
     }
-
-    // Вложения из таблицы (step12): сначала строки, потом файлы с диска
     foreach ($delAttachments as $att) {
-        try {
-            $pdo->prepare("DELETE FROM claim_attachments WHERE id = ?")->execute([$att['id']]);
-        } catch (PDOException $e) { /* таблицы нет — нечего удалять */ }
         deleteUploadIfUnused($pdo, (string)$att['stored_name'], $id);
     }
 
     logAction('delete', 'claim', $id, 'Удалена претензия: ' . mb_substr($delClaim['subject'], 0, 100));
-
-    $stmt = $pdo->prepare("DELETE FROM claims WHERE id = ?");
-    $stmt->execute([$id]);
 
     header('Location: index.php?deleted=1');
     exit;
