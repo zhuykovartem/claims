@@ -495,10 +495,84 @@ document.querySelectorAll('.att-del-check').forEach(chk => {
     sync();
 });
 
+// step12d: НАКОПЛЕНИЕ файлов в dropzone вместо замены.
+// Стандартное поведение <input type="file"> при каждом новом выборе в окне
+// браузера ЗАМЕНЯЕТ предыдущий список. Из-за этого при прикреплении файлов
+// по одному (без промежуточного сохранения) на сервер уходил только
+// последний выбранный файл — в claim_attachments появлялась одна запись.
+// Теперь выбор НАКАПЛИВАЕТСЯ: новый файл добавляется к уже выбранным,
+// дубликаты пропускаются, лимит блока соблюдается, ведётся счётчик.
+// Уже сохранённые файлы перечислены выше отдельным списком — они не здесь.
 document.querySelectorAll('.dropzone').forEach(zone => {
     const inputId = zone.dataset.input;
     const input = document.getElementById(inputId);
     const maxFiles = parseInt(zone.dataset.max || ATTACHMENTS_MAX_PER_KIND, 10);
+    const canDt = (typeof DataTransfer !== 'undefined');
+    let picked = []; // ещё не отправленные файлы этого блока
+
+    const fileKey = f => f.name + '|' + f.size + '|' + (f.lastModified || 0);
+
+    // Синхронизация input.files с накопителем: форма отправит именно его
+    function writeBack() {
+        if (!canDt) return;
+        const dt = new DataTransfer();
+        picked.forEach(f => dt.items.add(f));
+        input.value = '';
+        input.files = dt.files;
+    }
+
+    // Перерисовка списка выбранных файлов и счётчика
+    function render() {
+        const preview = zone.querySelector('.dropzone-preview');
+        const source = canDt ? picked : Array.from(input.files);
+        preview.innerHTML = '';
+        source.forEach((f, idx) => {
+            const line = document.createElement('div');
+            line.className = 'att-file-line';
+            line.innerHTML = '<i class="bi bi-file-earmark text-secondary"></i>'
+                + '<span class="att-fname"></span>'
+                + '<small class="text-muted att-fsize"></small>'
+                + '<button type="button" class="btn btn-sm btn-outline-danger att-file-remove" title="Убрать из новых">✕</button>';
+            line.querySelector('.att-fname').textContent = f.name;
+            line.querySelector('.att-fsize').textContent = formatBytesJs(f.size);
+            const removeBtn = line.querySelector('.att-file-remove');
+            if (canDt) {
+                removeBtn.addEventListener('click', e => {
+                    e.stopPropagation();
+                    picked.splice(idx, 1);
+                    writeBack();
+                    render();
+                });
+            } else {
+                removeBtn.style.display = 'none'; // без DataTransfer пересобрать FileList нельзя
+            }
+            preview.appendChild(line);
+        });
+        let counter = zone.querySelector('.dropzone-count');
+        if (!counter) {
+            counter = document.createElement('small');
+            counter.className = 'dropzone-count text-muted d-block mt-1';
+            zone.appendChild(counter);
+        }
+        counter.textContent = source.length > 0
+            ? 'Выбрано новых файлов: ' + source.length + ' из ' + maxFiles
+            : '';
+        zone.classList.toggle('has-file', source.length > 0);
+    }
+
+    // ДОБАВИТЬ файлы к накопленным (именно добавить, не заменить!)
+    function addFiles(fileList) {
+        let dup = 0, over = 0;
+        Array.from(fileList).forEach(f => {
+            if (picked.some(x => fileKey(x) === fileKey(f))) { dup++; return; }
+            if (picked.length >= maxFiles) { over++; return; }
+            picked.push(f);
+        });
+        writeBack();
+        if (over > 0) alert('Лимит блока — ' + maxFiles + ' файл(ов). Не добавлено: ' + over);
+        if (dup > 0) alert('Такой файл уже выбран — пропущено: ' + dup);
+        render();
+    }
 
     zone.addEventListener('click', () => input.click());
 
@@ -508,59 +582,44 @@ document.querySelectorAll('.dropzone').forEach(zone => {
         e.preventDefault();
         zone.classList.remove('dragover');
         if (e.dataTransfer.files.length) {
-            setDropzoneFiles(input, e.dataTransfer.files, maxFiles);
-            updateDropzone(zone, input);
+            if (canDt) {
+                addFiles(e.dataTransfer.files);
+            } else {
+                setDropzoneFiles(input, e.dataTransfer.files, maxFiles);
+                render();
+            }
         }
     });
 
     input.addEventListener('change', () => {
-        if (input.files.length > maxFiles) {
-            alert('Можно добавить не более ' + maxFiles + ' файлов в этом блоке');
+        if (canDt) {
+            if (input.files.length) addFiles(input.files);
+            // Сброс значения, чтобы повторный выбор ТОГО ЖЕ файла снова
+            // вызвал change; накопленный список возвращаем в input сразу,
+            // чтобы форма при сохранении отправила все выбранные файлы.
             input.value = '';
+            writeBack();
+        } else {
+            if (input.files.length > maxFiles) {
+                alert('Можно добавить не более ' + maxFiles + ' файлов в этом блоке');
+                input.value = '';
+            }
+            render();
         }
-        updateDropzone(zone, input);
     });
 });
 
+// Резерв для очень старых браузеров без конструктора DataTransfer:
+// прежнее поведение — замена набора файлов одним перетаскиванием.
 function setDropzoneFiles(input, fileList, maxFiles) {
     const dt = new DataTransfer();
     let skipped = 0;
-    [...fileList].forEach(f => {
+    Array.from(fileList).forEach(f => {
         if (dt.files.length < maxFiles) dt.items.add(f); else skipped++;
     });
     input.value = '';
     input.files = dt.files;
     if (skipped > 0) alert('Пропущено ' + skipped + ' файл(ов) — лимит ' + maxFiles);
-}
-
-function updateDropzone(zone, input) {
-    const preview = zone.querySelector('.dropzone-preview');
-    const count = input.files.length;
-    preview.innerHTML = '';
-    if (count > 0) {
-        [...input.files].forEach(f => {
-            const line = document.createElement('div');
-            line.className = 'att-file-line';
-            line.innerHTML = '<i class="bi bi-file-earmark text-secondary"></i>'
-                + '<span class="att-fname"></span>'
-                + '<small class="text-muted att-fsize"></small>'
-                + '<button type="button" class="btn btn-sm btn-outline-danger att-file-remove" title="Убрать из новых">✕</button>';
-            line.querySelector('.att-fname').textContent = f.name;
-            line.querySelector('.att-fsize').textContent = formatBytesJs(f.size);
-            line.querySelector('.att-file-remove').addEventListener('click', e => {
-                e.stopPropagation();
-                const dt = new DataTransfer();
-                [...input.files].forEach(x => { if (x !== f) dt.items.add(x); });
-                input.value = '';
-                input.files = dt.files;
-                updateDropzone(zone, input);
-            });
-            preview.appendChild(line);
-        });
-        zone.classList.add('has-file');
-    } else {
-        zone.classList.remove('has-file');
-    }
 }
 </script>
 <script>
