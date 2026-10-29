@@ -459,6 +459,79 @@ function getClaimAttachments(PDO $pdo, int $claimId, ?string $kind = null): arra
     }
 }
 
+// step12c: превращает ошибку PDO при записи в claim_attachments в понятный
+// текст с ПРИЧИНОЙ и готовым способом исправления (вместо общей подсказки).
+function attachmentsPdoErrorHint(PDOException $e): string {
+    $sqlState  = (string)$e->getCode();
+    $driverMsg = trim((string)($e->errorInfo[2] ?? $e->getMessage()));
+    if ($sqlState === '42S02' || mb_stripos($driverMsg, "doesn't exist") !== false) {
+        return 'таблица claim_attachments не существует — SQL-миграция step12 не применена. '
+             . 'Выполните на базе файл migrations/2026-10-28_step12_claim_attachments.sql '
+             . '(откройте check_attachments.php — там готовая диагностика и вердикт)';
+    }
+    if ($sqlState === '23000') {
+        return 'СУБД отвергла запись как дубликат (' . $driverMsg . ') — вероятно, индекс '
+             . 'по (claim_id, file_kind) в claim_attachments создан как UNIQUE, и второй файл '
+             . 'того же типа не может сохраниться. Проверка: SHOW INDEX FROM claim_attachments; '
+             . 'готовый ALTER — в check_attachments.php и в migrations/2026-10-29_step12c_attachments_check.sql';
+    }
+    return '[' . $sqlState . '] ' . $driverMsg;
+}
+
+// step12c: проверяет схему/окружение для вложений. Возвращает null, если всё
+// в порядке, иначе — текст для красного баннера в add/edit/view.
+// Проблемы, которые раньше молча прятались в try/catch:
+//   1) таблицы claim_attachments нет (миграция не применялась);
+//   2) индекс по (claim_id, file_kind) сделан UNIQUE — сохраняется только
+//      один файл каждого типа, остальные падают с duplicate key.
+function attachmentsSchemaProblem(PDO $pdo): ?string {
+    try {
+        $pdo->query("SELECT 1 FROM claim_attachments LIMIT 1");
+    } catch (PDOException $e) {
+        if ((string)$e->getCode() === '42S02') {
+            return 'Таблица claim_attachments не существует — SQL-миграция step12 не применена, '
+                 . 'файлы вложений НЕ СОХРАНЯЮТСЯ. Выполните на базе '
+                 . 'migrations/2026-10-28_step12_claim_attachments.sql и обновите страницу. '
+                 . 'Полная диагностика: check_attachments.php';
+        }
+        return 'Ошибка доступа к claim_attachments [' . (string)$e->getCode() . ']: '
+             . trim((string)($e->errorInfo[2] ?? $e->getMessage()))
+             . ' — смотрите check_attachments.php';
+    }
+    try {
+        $idx = $pdo->query("SHOW INDEX FROM claim_attachments")->fetchAll(PDO::FETCH_ASSOC);
+        $colsByIndex = [];
+        foreach ($idx as $row) {
+            $colsByIndex[(string)$row['Key_name']][] = (string)$row['Column_name'];
+        }
+        foreach ($idx as $row) {
+            if ((int)($row['Non_unique'] ?? 1) !== 0) {
+                continue; // обычный индекс — не мешает
+            }
+            $idxName = (string)$row['Key_name'];
+            if ($idxName === 'PRIMARY') {
+                continue; // PRIMARY KEY (id) — норма
+            }
+            $cols = array_values(array_unique($colsByIndex[$idxName] ?? []));
+            sort($cols);
+            // Уникальность в пределах претензии/типа запрещает несколько файлов
+            $restrictive = ['claim_id', 'file_kind'];
+            $isRestrictive = !array_diff($cols, $restrictive) && !empty($cols);
+            if ($isRestrictive) {
+                return 'Индекс «' . $idxName . '» по (' . implode(', ', $cols) . ') в claim_attachments '
+                     . 'создан как UNIQUE — сохраняется только ОДИН файл каждого типа, остальные '
+                     . 'отвергаются СУБД как дубликаты. Исправление (выполнить на базе): '
+                     . 'ALTER TABLE claim_attachments DROP INDEX `' . $idxName . '`, '
+                     . 'ADD INDEX idx_att_claim (claim_id, file_kind); '
+                     . 'Подробности: check_attachments.php';
+            }
+        }
+    } catch (PDOException $e) {
+        // SHOW INDEX не прошёл — таблица есть, но права ограничены; не блокируем работу
+    }
+    return null;
+}
+
 // Имя вложения для показа пользователю: оригинальное, а для старых
 // записей (до step12) — техническое имя на диске
 function attachmentDisplayName(array $att): string {
@@ -576,8 +649,8 @@ function saveClaimAttachment(PDO $pdo, int $claimId, string $kind, array $slot, 
         ]);
     } catch (PDOException $e) {
         @unlink(UPLOAD_DIR . $stored);
-        return [false, 'не удалось зарегистрировать файл «' . $name . '» в базе '
-             . '(проверьте, что SQL-миграция step12 применена)', null];
+        return [false, 'не удалось зарегистрировать файл «' . $name . '» в базе: '
+             . attachmentsPdoErrorHint($e), null];
     }
     return [true, '', (int)$pdo->lastInsertId()];
 }

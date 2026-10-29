@@ -294,6 +294,16 @@ require 'templates/header.php';
                 <a href="index.php" class="btn btn-outline-secondary"><i class="bi bi-arrow-left"></i> Назад</a>
             </div>
 
+            <?php $attSchemaProblem = attachmentsSchemaProblem($pdo); ?>
+            <?php if ($attSchemaProblem): ?>
+                <div class="alert alert-danger">
+                    <strong><i class="bi bi-exclamation-triangle"></i> Проблема с хранилищем вложений.</strong><br>
+                    <?= htmlspecialchars($attSchemaProblem) ?><br>
+                    <small>Пока проблема не устранена, новые файлы не сохранятся, а в списке ниже видны
+                    только уже записанные в таблицу. Диагностика:
+                    <a href="check_attachments.php?claim_id=<?= $id ?>" class="alert-link">check_attachments.php</a></small>
+                </div>
+            <?php endif; ?>
             <?php if ($error): ?>
                 <div class="alert alert-danger alert-dismissible fade show">❌ <?= htmlspecialchars($error) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
             <?php endif; ?>

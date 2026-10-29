@@ -90,6 +90,15 @@ $sidebarContent = '';
 
 require 'templates/header.php';
 ?>
+            <?php $attSchemaProblem = attachmentsSchemaProblem($pdo); ?>
+            <?php if ($attSchemaProblem): ?>
+                <div class="alert alert-danger">
+                    <strong><i class="bi bi-exclamation-triangle"></i> Проблема с хранилищем вложений.</strong><br>
+                    <?= htmlspecialchars($attSchemaProblem) ?><br>
+                    <small>Список карточек ниже может быть неполным. Диагностика:
+                    <a href="check_attachments.php?claim_id=<?= $c['id'] ?>" class="alert-link">check_attachments.php</a></small>
+                </div>
+            <?php endif; ?>
 <div class="detail-header <?= $color ?> d-flex justify-content-between align-items-center mb-4">
     <div>
         <h3 class="fw-bold mb-0">
