@@ -3,6 +3,13 @@ require 'config.php';
 requireAuth();
 requireRole('admin', 'manager');
 
+// step12b: защита от устаревшего config.php (OPcache / неполная замена файлов)
+if (!function_exists('normalizeUploadSlots')) {
+    http_response_code(500);
+    die('❌ config.php не обновлён (нет функций step12). Замените config.php из пакета '
+        . 'и сбросьте OPcache / перезапустите PHP-FPM, затем обновите страницу.');
+}
+
 $error = '';
 $message = '';
 $claim = null;
@@ -189,6 +196,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (!empty($attachmentWarnings)) {
             logAction('attachment_error', 'claim', $id, 'Часть вложений не сохранена: ' . implode('; ', $attachmentWarnings));
+            foreach ($attachmentWarnings as $aw) { flashWarning($aw); }
         }
 
         logAction('update', 'claim', $id, 'Отредактирована претензия: ' . mb_substr($subject, 0, 100));
@@ -427,7 +435,7 @@ require 'templates/header.php';
 
                             <div class="col-md-5">
                                 <div class="upload-block">
-                                    <label class="form-label fw-semibold">📎 Дополнительные файлы <small class="text-muted fw-normal">(записи от импорта)</small></label>
+                                    <label class="form-label fw-semibold">📎 Дополнительные файлы <small class="text-muted fw-normal">(можно несколько)</small></label>
                                     <div class="dropzone" data-input="additional_files">
                                         <div class="dropzone-message">
                                             <i class="bi bi-cloud-upload fs-2 d-block mb-2"></i>

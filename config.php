@@ -161,9 +161,32 @@ function verifyCsrfToken($token) {
 function requireCsrfToken() {
     $token = $_POST['csrf_token'] ?? '';
     if (!verifyCsrfToken($token)) {
+        // Если POST не дошёл до PHP целиком (суммарный размер файлов превысил
+        // post_max_size), $_POST и $_FILES приходят ПУСТЫМИ и токен
+        // «недействителен». Показываем понятную причину вместо обманчивой.
+        if ($_SERVER['REQUEST_METHOD'] === 'POST' && empty($_POST)
+            && (int)($_SERVER['CONTENT_LENGTH'] ?? 0) > 0) {
+            http_response_code(413);
+            die('❌ Отправленные данные не приняты сервером: суммарный размер файлов '
+                . 'превышает лимит PHP (post_max_size / upload_max_filesize в php.ini). '
+                . 'Прикрепите файлы меньшими партиями или увеличьте лимиты на сервере.');
+        }
         http_response_code(419);
         die('❌ CSRF-токен недействителен');
     }
+}
+
+// ===== Flash-предупреждения между страницами (step12b) =====
+// Используются, когда претензия сохранена, но часть вложений сбойнула:
+// user видит предупреждение на index.php после редиректа.
+function flashWarning(string $message): void {
+    $_SESSION['flash_warnings'] = array_merge($_SESSION['flash_warnings'] ?? [], [$message]);
+}
+
+function takeFlashWarnings(): array {
+    $warnings = $_SESSION['flash_warnings'] ?? [];
+    unset($_SESSION['flash_warnings']);
+    return $warnings;
 }
 
 // ===== Функции претензий =====
@@ -458,7 +481,19 @@ function normalizeUploadSlots($filesField): array {
     }
     foreach ($filesField['name'] as $i => $n) {
         $err = (int)($filesField['error'][$i] ?? UPLOAD_ERR_NO_FILE);
-        if ($err === UPLOAD_ERR_NO_FILE) continue; // пустой слот выбора
+        if ($err === UPLOAD_ERR_NO_FILE) {
+            // Пустой слот выбора. Но если имя файла задано, а PHP вернул
+            // NO_FILE — слот отброшен самим PHP: превышен лимит
+            // одновременных загрузок max_file_uploads (php.ini).
+            // Превращаем молчаливую потерю файла в явную ошибку (step12b).
+            if ((string)$n !== '') {
+                $slots[] = [
+                    'name' => (string)$n, 'tmp_name' => '', 'error' => UPLOAD_ERR_NO_FILE,
+                    'size' => 0, 'dropped_by_php' => true,
+                ];
+            }
+            continue;
+        }
         $slots[] = [
             'name'     => (string)$n,
             'tmp_name' => (string)($filesField['tmp_name'][$i] ?? ''),
@@ -491,6 +526,12 @@ function uploadErrorMessage(int $code, string $name): string {
 // MIME-тип и расширение. Возвращает '' или текст ошибки.
 function validateUploadSlot(array $slot, string $kindLabel): string {
     $name = (string)($slot['name'] ?? '');
+    if (!empty($slot['dropped_by_php'])) {
+        return 'файл «' . $name . '» не принят сервером: превышен лимит '
+             . 'одновременной загрузки файлов (max_file_uploads = '
+             . (ini_get('max_file_uploads') ?: '?') . ' в php.ini) — '
+             . 'прикрепите файлы меньшими партиями или увеличьте лимит';
+    }
     if (($slot['error'] ?? UPLOAD_ERR_NO_FILE) !== UPLOAD_ERR_OK) {
         return uploadErrorMessage((int)$slot['error'], $name);
     }

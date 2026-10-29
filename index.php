@@ -188,6 +188,10 @@ require 'templates/header.php';
             <?php elseif (isset($_GET['updated'])): ?>
                 <div class="alert alert-info alert-dismissible fade show">📝 Изменения сохранены.<button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
             <?php endif; ?>
+            <?php // step12b: предупреждения о вложениях, не сохранённых при записи претензии ?>
+            <?php foreach (takeFlashWarnings() as $fw): ?>
+                <div class="alert alert-warning alert-dismissible fade show">⚠️ <?= htmlspecialchars($fw) ?><button type="button" class="btn-close" data-bs-dismiss="alert"></button></div>
+            <?php endforeach; ?>
 
             <div class="card shadow-sm border-0 mb-3">
                 <div class="card-body py-3">

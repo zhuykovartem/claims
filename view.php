@@ -2,6 +2,14 @@
 require 'config.php';
 requireAuth();
 
+// step12b: защита от устаревшего config.php (OPcache / неполная замена файлов) —
+// без неё страница молча обрывается и секция «Прикреплённые файлы» исчезает
+if (!function_exists('normalizeUploadSlots')) {
+    http_response_code(500);
+    die('❌ config.php не обновлён (нет функций step12). Замените config.php из пакета '
+        . 'и сбросьте OPcache / перезапустите PHP-FPM, затем обновите страницу.');
+}
+
 $id = (int)($_GET['id'] ?? 0);
 
 $stmt = $pdo->prepare("SELECT c.*, o.name as object_name, u.full_name as created_by_name, co.name as recipient_name

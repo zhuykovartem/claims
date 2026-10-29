@@ -3,6 +3,13 @@ require 'config.php';
 requireAuth();
 requireRole('admin', 'manager');
 
+// step12b: защита от устаревшего config.php (OPcache / неполная замена файлов)
+if (!function_exists('normalizeUploadSlots')) {
+    http_response_code(500);
+    die('❌ config.php не обновлён (нет функций step12). Замените config.php из пакета '
+        . 'и сбросьте OPcache / перезапустите PHP-FPM, затем обновите страницу.');
+}
+
 $id = (int)($_GET['id'] ?? 0);
 
 $stmt = $pdo->prepare("SELECT applicant, subject, claim_file, response_file, additional_files FROM claims WHERE id = ?");

@@ -9,6 +9,13 @@
 require 'config.php';
 requireAuth();
 
+// step12b: защита от устаревшего config.php (OPcache / неполная замена файлов)
+if (!function_exists('normalizeUploadSlots')) {
+    http_response_code(500);
+    die('❌ config.php не обновлён (нет функций step12). Замените config.php из пакета '
+        . 'и сбросьте OPcache / перезапустите PHP-FPM, затем обновите страницу.');
+}
+
 // ===== Режим 1: вложение из таблицы claim_attachments (?att=ID, step12) =====
 // Имя файла на диске и оригинальное имя пользователя берутся из БД.
 $attId = 0;

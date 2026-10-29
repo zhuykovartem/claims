@@ -3,6 +3,15 @@ require 'config.php';
 requireAuth();
 requireRole('admin', 'manager');
 
+// step12b: защита от устаревшего config.php (OPcache / неполная замена файлов).
+// Без неё страница молча обрезается посреди формы на первом же выводе
+// ATTACHMENTS_MAX_PER_KIND — пользователь видит форму без блоков файлов и кнопки.
+if (!function_exists('normalizeUploadSlots')) {
+    http_response_code(500);
+    die('❌ config.php не обновлён (нет функций step12). Замените config.php из пакета '
+        . 'и сбросьте OPcache / перезапустите PHP-FPM, затем обновите страницу.');
+}
+
 $error = '';
 $message = '';
 
@@ -44,12 +53,17 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
 
     $claimSlots = [];
     $responseSlots = [];
+    $additionalSlots = [];
+    $additionalFileNames = [];
     $attachmentWarnings = [];
 
     if (empty($error)) {
         // ===== Мультизагрузка: файлы претензии и ответа (step12) =====
         $claimSlots = normalizeUploadSlots($_FILES['claim_files'] ?? null);
         $responseSlots = normalizeUploadSlots($_FILES['response_files'] ?? null);
+        // step12b: доп. файлы снова обрабатываются при создании
+        // (обработка была потеряна при переписывании формы — блок молча игнорировался)
+        $additionalSlots = normalizeUploadSlots($_FILES['additional_files'] ?? null);
 
         if (count($claimSlots) > ATTACHMENTS_MAX_PER_KIND) {
             $error = 'Файлов претензии выбрано ' . count($claimSlots) . ' — не более ' . ATTACHMENTS_MAX_PER_KIND;
@@ -67,13 +81,37 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                     if ($msg !== '') { $error = $msg; break; }
                 }
             }
+            if (empty($error)) {
+                foreach ($additionalSlots as $slot) {
+                    $msg = validateUploadSlot($slot, 'доп. файла');
+                    if ($msg !== '') { $error = $msg; break; }
+                }
+            }
+        }
+    }
+
+    // step12b: сохранение доп. файлов на диск (до создания записи;
+    // при сбое запись не создаётся, полусохранённые файлы удаляются)
+    if (empty($error)) {
+        foreach ($additionalSlots as $slot) {
+            $ext = uploadExtension((string)$slot['name']);
+            $fname = 'add_' . time() . '_' . bin2hex(random_bytes(6)) . '.' . $ext;
+            if (!@move_uploaded_file((string)$slot['tmp_name'], UPLOAD_DIR . $fname)) {
+                $error = 'Не удалось сохранить доп. файл «' . $slot['name'] . '» на сервер';
+                break;
+            }
+            $additionalFileNames[] = $fname;
+        }
+        if (!empty($error)) {
+            foreach ($additionalFileNames as $f) { @unlink(UPLOAD_DIR . $f); }
+            $additionalFileNames = [];
         }
     }
 
     if (empty($error)) {
         $stmt = $pdo->prepare("INSERT INTO claims
             (object_id, applicant, apartment_number, direction, received_from, received_date, subject, current_status, additional_notes, response_direction, response_date, recipient_id, claim_file, response_file, additional_files, created_by)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, NULL, ?)");
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, NULL, ?, ?)");
 
         $stmt->execute([
             $object_id,
@@ -88,6 +126,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
             $response_direction ?: null,
             $response_date,
             $recipient_id,
+            !empty($additionalFileNames) ? json_encode(array_values($additionalFileNames), JSON_UNESCAPED_UNICODE) : null,
             $_SESSION['user_id']
         ]);
 
@@ -106,6 +145,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         }
         if (!empty($attachmentWarnings)) {
             logAction('attachment_error', 'claim', $newId, 'Часть вложений не сохранена: ' . implode('; ', $attachmentWarnings));
+            foreach ($attachmentWarnings as $aw) { flashWarning($aw); }
         }
 
         logAction('create', 'claim', $newId, 'Добавлена претензия: ' . mb_substr($subject, 0, 100)
