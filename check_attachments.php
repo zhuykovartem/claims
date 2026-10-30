@@ -4,9 +4,9 @@ requireAuth();
 requireRole('admin'); // диагностика схемы БД и сервера — только администратору
 
 // ============================================================
-// step12c/step12f: страница диагностики хранилища вложений.
+// step12c/step12f/step12g: страница диагностики хранилища вложений.
 // Показывает ТОЛЬКО схему и счётчики (без содержимого документов):
-//   0) ЦЕЛОСТНОСТЬ ФАЙЛОВ ПАКЕТА (step12f): sha1 и размер ключевых php-файлов
+//   0) ЦЕЛОСТНОСТЬ ФАЙЛОВ ПАКЕТА (step12g): sha1 и размер ключевых php-файлов
 //      против эталонного манифеста — ловит обрезанные/повреждённые при
 //      замене файлы (причина «форма обрывается, нет кнопки сохранения»);
 //   1) настройки PHP веб-сервера (upload_max_filesize, post_max_size,
@@ -52,11 +52,11 @@ if ($dirWritable) {
     }
 }
 
-// ---------- step12f: целостность файлов пакета ----------
-// Манифест подставляется сборочным скриптом (build_step12f.sh) в момент сборки
+// ---------- step12g: целостность файлов пакета ----------
+// Манифест подставляется сборочным скриптом (build_step12g.sh) в момент сборки
 // zip-пакета. Если манифест пуст — страница запущена вне пакета (например,
 // из git-репозитория): раздел покажет размеры/хэши, но без вердикта.
-$PKG_SHA1 = /*STEP12F_MANIFEST*/['add.php' => '1db05a25b61ed93927158b2c7cfbd905f7a4a059', 'config.php' => '9ad27434444cbdcf9e7679a29fbf125c3bb856d1', 'delete.php' => 'c19bb18e6fb7f697af34792431d9da60b568f4bc', 'download.php' => '32f1ef779efb6de8142c464e4915c3e28afe68ca', 'edit.php' => 'cce852a3a1b334de04794ccb0c7fa8b3d3ffd478', 'view.php' => '5646b22f24c49de127db898f1404fa72b072905a']/*STEP12F_END*/;
+$PKG_SHA1 = /*STEP12G_MANIFEST*/['add.php' => '1db05a25b61ed93927158b2c7cfbd905f7a4a059', 'config.php' => '4efcb8cfa31c5d4e6cc4ae10cc591e578b06a1e3', 'delete.php' => 'c19bb18e6fb7f697af34792431d9da60b568f4bc', 'download.php' => '32f1ef779efb6de8142c464e4915c3e28afe68ca', 'edit.php' => 'cce852a3a1b334de04794ccb0c7fa8b3d3ffd478', 'index.php' => 'c329c988e6d8414723c8120b67ee95f20758818d', 'view.php' => '5646b22f24c49de127db898f1404fa72b072905a']/*STEP12G_END*/;
 $fileReport = [];   // [file => ['exists'=>bool,'size'=>int|false,'sha1'=>string|false,'ok'=>bool|null]]
 $fileProblems = [];
 foreach ($PKG_SHA1 as $pkgFile => $pkgSha) {
@@ -114,6 +114,8 @@ if ($tableExists) {
 $claimRows  = [];
 $legacy     = null;
 $claimInfo  = null;
+$diskReport = [];   // step12g: [rowIndex => ['exists'=>bool,'disk_size'=>int|false]]
+$diskMissing = 0;   // строк в БД, чьих файлов НЕТ на диске
 if ($claimId > 0) {
     try {
         $st = $pdo->prepare("SELECT id, subject, claim_file, response_file, additional_files FROM claims WHERE id = ?");
@@ -127,6 +129,17 @@ if ($claimId > 0) {
             $st->execute([$claimId]);
             $claimRows = $st->fetchAll();
         } catch (PDOException $e) { $claimRows = []; }
+        // step12g: сверка «запись в БД ↔ файл на диске» для каждой строки
+        foreach ($claimRows as $i => $r) {
+            $p    = UPLOAD_DIR . basename((string)$r['stored_name']);
+            $legP = __DIR__ . '/uploads/' . basename((string)$r['stored_name']);
+            $exists = is_file($p) || is_file($legP);
+            $diskReport[$i] = [
+                'exists'    => $exists,
+                'disk_size' => $exists ? (is_file($p) ? filesize($p) : filesize($legP)) : false,
+            ];
+            if (!$exists) { $diskMissing++; }
+        }
     }
 }
 
@@ -187,11 +200,11 @@ if ($manifestActive && !empty($fileProblems)) {
     $problems[] = [
         'title'  => 'Файл(ы) на сервере не совпадают с пакетом: ' . implode(', ', $fileProblems),
         'detail' => 'Размер или контрольная сумма файла на сервере отличается от эталонной '
-                  . 'из пакета step12f. Чаще всего файл обрезан или повреждён при замене '
+                  . 'из пакета step12g. Чаще всего файл обрезан или повреждён при замене '
                   . '(копирование текста вручную, обрыв FTP, ограничения панели хостинга). '
                   . 'Именно поэтому форма может обрываться: нет блока «Файл ответа», '
                   . 'кнопки «Сохранить изменения» и футера страницы.',
-        'fix'    => 'Загрузите указанные файлы заново: либо откройте deploy_step12f.php '
+        'fix'    => 'Загрузите указанные файлы заново: либо откройте deploy_step12g.php '
                   . 'из пакета (он сам запишет файлы байт-в-байт и проверит), либо '
                   . 'распакуйте zip на сервере поверх файлов сайта (бинарная замена, '
                   . 'НЕ копирование текста вручную). Затем обновите эту страницу — '
@@ -289,7 +302,7 @@ require 'templates/header.php';
         </div>
     <?php endforeach; ?>
 
-    <!-- ===== 0. Целостность файлов пакета (step12f) ===== -->
+    <!-- ===== 0. Целостность файлов пакета (step12g) ===== -->
     <div class="col-12">
         <div class="card shadow-sm border-0 <?= $manifestActive ? ($fileProblems ? 'verdict-bad' : 'verdict-ok') : '' ?>">
             <div class="card-body">
@@ -298,7 +311,7 @@ require 'templates/header.php';
                     <div class="alert alert-light border mb-0">
                         Эталонный манифест не подставлен: страница запущена вне собранного пакета
                         (например, из репозитория). Сравнивать не с чем — раздел показывает только фактические
-                        размеры и хэши. После установки пакета step12f (deploy_step12f.php или zip) здесь
+                        размеры и хэши. После установки пакета step12g (deploy_step12g.php или zip) здесь
                         появится построчная проверка.
                     </div>
                 <?php else: ?>
@@ -327,7 +340,7 @@ require 'templates/header.php';
                     <small class="text-muted">
                         Обрезанный файл — главная причина «форма без блока «Файл ответа» и без кнопки
                         «Сохранить изменения»»: страница рендерится до места обрыва и молча заканчивается.
-                        Если хотя бы одна строка красная — переустановите пакет через deploy_step12f.php
+                        Если хотя бы одна строка красная — переустановите пакет через deploy_step12g.php
                         или распаковкой zip на сервере (НЕ копированием текста вручную).
                     </small>
                 <?php endif; ?>
@@ -466,18 +479,22 @@ require 'templates/header.php';
                 <?php elseif ($claimInfo): ?>
                     <div class="table-responsive">
                         <table class="table table-sm table-bordered mb-2">
-                            <thead><tr><th>#</th><th>Тип</th><th>Имя для показа</th><th>Имя на диске</th><th>Размер</th><th>Загружено</th></tr></thead>
+                            <thead><tr><th>#</th><th>Тип</th><th>Имя для показа</th><th>Имя на диске</th><th>Размер (БД)</th><th>На диске (step12g)</th><th>Загружено</th></tr></thead>
                             <tbody>
                                 <?php if (empty($claimRows)): ?>
-                                    <tr><td colspan="6" class="text-center text-muted">в claim_attachments записей нет</td></tr>
+                                    <tr><td colspan="7" class="text-center text-muted">в claim_attachments записей нет</td></tr>
                                 <?php else: ?>
                                     <?php foreach ($claimRows as $i => $r): ?>
-                                        <tr>
+                                        <?php $dr = $diskReport[$i] ?? ['exists' => false, 'disk_size' => false]; ?>
+                                        <tr<?= $dr['exists'] ? '' : ' class="table-danger"' ?>>
                                             <td><?= $i + 1 ?></td>
                                             <td><?= $r['file_kind'] === 'claim' ? 'претензия' : 'ответ' ?></td>
                                             <td><?= htmlspecialchars(attachmentDisplayName($r)) ?></td>
                                             <td><code><?= htmlspecialchars((string)$r['stored_name']) ?></code></td>
                                             <td><?= $r['file_size'] ? formatBytes((int)$r['file_size']) : '—' ?></td>
+                                            <td><?= $dr['exists']
+                                                    ? '<span class="badge bg-success">есть</span> ' . formatBytes((int)$dr['disk_size'])
+                                                    : '<span class="badge bg-danger">НЕТ ФАЙЛА</span>' ?></td>
                                             <td><?= htmlspecialchars((string)$r['uploaded_at']) ?></td>
                                         </tr>
                                     <?php endforeach; ?>
@@ -485,6 +502,20 @@ require 'templates/header.php';
                             </tbody>
                         </table>
                     </div>
+                    <?php if (!empty($claimRows)): ?>
+                        <?php if ($diskMissing === 0): ?>
+                            <div class="alert alert-success py-2 mb-2">
+                                ✅ Все файлы этой претензии есть на диске — скачивание работает. Если на странице просмотра
+                                не было кнопок «Открыть файл», это был обрыв рендера из-за formatBytes() — он исправлен в step12g.
+                            </div>
+                        <?php else: ?>
+                            <div class="alert alert-danger py-2 mb-2">
+                                ❌ Файлов нет на диске: <strong><?= $diskMissing ?></strong> из <?= count($claimRows) ?>.
+                                Строки в БД есть, файлы потеряны — прикрепите их заново через «Редактировать».
+                                Если потеря массовая — сверьте содержимое UPLOAD_DIR (раздел 2) с таблицей.
+                            </div>
+                        <?php endif; ?>
+                    <?php endif; ?>
                     <small class="text-muted">
                         Legacy-поля записи: claim_file =
                         <code><?= $claimInfo['claim_file'] ? htmlspecialchars((string)$claimInfo['claim_file']) : 'NULL' ?></code>,

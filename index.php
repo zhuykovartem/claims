@@ -83,6 +83,27 @@ $pageStmt = $pdo->prepare("SELECT c.*, o.name as object_name, u.full_name as cre
 $pageStmt->execute($params);
 $claimsPage = $pageStmt->fetchAll();
 
+// step12g: счётчики вложений из claim_attachments для строк ТЕКУЩЕЙ страницы
+// (один сгруппированный запрос). Колонка «Файлы» раньше смотрела только на
+// legacy-поля claim_file/response_file и выглядела пустой для всех претензий,
+// файлы которых лежат в таблице вложений (все загрузки после step12) —
+// из-за этого после сохранения формы «пропадали» файлы в реестре.
+$attCounts = [];
+if (!empty($claimsPage)) {
+    $ids = array_map(static fn($r) => (int)$r['id'], $claimsPage);
+    $in  = implode(',', array_fill(0, count($ids), '?'));
+    try {
+        $acStmt = $pdo->prepare("SELECT claim_id, file_kind, COUNT(*) AS cnt
+            FROM claim_attachments WHERE claim_id IN ($in) GROUP BY claim_id, file_kind");
+        $acStmt->execute($ids);
+        foreach ($acStmt->fetchAll() as $acRow) {
+            $attCounts[(int)$acRow['claim_id']][$acRow['file_kind']] = (int)$acRow['cnt'];
+        }
+    } catch (PDOException $e) {
+        // таблицы вложений ещё нет — колонка покажет только legacy-иконки
+    }
+}
+
 $queryParams = $_GET;
 unset($queryParams['page']);
 
@@ -288,6 +309,13 @@ require 'templates/header.php';
                                             <br><small class="text-muted"><?= htmlspecialchars($c['current_status'] ?? '—') ?></small>
                                         </td>
                                         <td>
+                                            <?php $rowAtt = $attCounts[(int)$c['id']] ?? []; // step12g ?>
+                                            <?php if (!empty($rowAtt['claim'])): ?>
+                                                <a href="view.php?id=<?= (int)$c['id'] ?>" class="btn btn-sm btn-outline-danger" title="Файлы претензии: <?= (int)$rowAtt['claim'] ?> шт. — открыть карточку"><i class="bi bi-filetype-pdf"></i> <?= (int)$rowAtt['claim'] ?></a>
+                                            <?php endif; ?>
+                                            <?php if (!empty($rowAtt['response'])): ?>
+                                                <a href="view.php?id=<?= (int)$c['id'] ?>" class="btn btn-sm btn-outline-success" title="Файлы ответа: <?= (int)$rowAtt['response'] ?> шт. — открыть карточку"><i class="bi bi-reply-all"></i> <?= (int)$rowAtt['response'] ?></a>
+                                            <?php endif; ?>
                                             <?php if ($c['claim_file']): ?>
                                                 <a href="<?= uploadLink($c['claim_file']) ?>" target="_blank" class="btn btn-sm btn-outline-danger" title="Претензия"><i class="bi bi-filetype-pdf"></i></a>
                                             <?php endif; ?>

@@ -60,6 +60,14 @@ if (!is_dir(UPLOAD_DIR)) {
     @mkdir(UPLOAD_DIR, 0770, true);
 }
 
+// step12g: ОБЩИЕ хелперы (formatBytes() и др.). Раньше helpers.php подключал
+// ТОЛЬКО import.php, поэтому view.php/edit.php/check_attachments.php падали
+// с фатальной ошибкой «Call to undefined function formatBytes()» на первом
+// вложении с заполненным file_size: страница обрывалась посреди рендера —
+// исчезали кнопки «Открыть файл» и «Сохранить изменения», карточки файлов
+// ответа не отображались. Теперь хелперы доступны на всех страницах.
+require_once __DIR__ . '/helpers.php';
+
 // ===== Настройки сессии =====
 ini_set('session.use_strict_mode', 1);
 ini_set('session.use_only_cookies', 1);
